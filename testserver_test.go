@@ -2,7 +2,6 @@ package dac
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,15 +13,16 @@ func startTestServer(t *testing.T, zoneText string, ad bool) (*WireResolver, str
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "zone.txt")
-	os.WriteFile(path, []byte(zoneText), 0o600)
-	// pick a free port
-	pc, _ := net.ListenPacket("udp", "127.0.0.1:0")
-	addr := pc.LocalAddr().String()
-	pc.Close()
+	if err := os.WriteFile(path, []byte(zoneText), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s := &TestServer{ZonePath: path, AD: ad}
-	go s.ListenAndServe(addr)
-	time.Sleep(100 * time.Millisecond)
-	return &WireResolver{Servers: []string{addr}, TrustAD: true, Timeout: 500 * time.Millisecond}, path
+	addr, _, stop, err := s.Start("127.0.0.1:0") // bound and serving on return
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	return &WireResolver{Servers: []string{addr}, TrustAD: true, Timeout: 3 * time.Second}, path
 }
 
 func TestTestServer(t *testing.T) {

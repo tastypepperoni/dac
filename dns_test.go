@@ -3,6 +3,7 @@ package dac
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -123,11 +124,11 @@ func startDNS(t *testing.T, handle func(qname string) respSpec) (string, func())
 			go func(c net.Conn) {
 				defer c.Close()
 				var lb [2]byte
-				if _, err := c.Read(lb[:]); err != nil {
+				if _, err := io.ReadFull(c, lb[:]); err != nil {
 					return
 				}
 				q := make([]byte, binary.BigEndian.Uint16(lb[:]))
-				if _, err := c.Read(q); err != nil {
+				if _, err := io.ReadFull(c, q); err != nil {
 					return
 				}
 				name, _, _ := readName(q, 12)

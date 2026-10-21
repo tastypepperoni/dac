@@ -216,25 +216,33 @@ func zoneTokens(line string) ([]zoneToken, error) {
 
 // ListenAndServe serves UDP and TCP on addr until an error occurs.
 func (s *TestServer) ListenAndServe(addr string) error {
-	if _, err := s.zone(); err != nil {
+	_, errc, _, err := s.Start(addr)
+	if err != nil {
 		return err
+	}
+	return <-errc
+}
+
+// Start binds UDP and TCP on addr (port 0 picks a free port), starts serving,
+// and returns the bound address.  The server is ready when Start returns.
+// stop closes both listeners.
+func (s *TestServer) Start(addr string) (bound string, errc <-chan error, stop func(), err error) {
+	if _, err := s.zone(); err != nil {
+		return "", nil, nil, err
 	}
 	pc, err := net.ListenPacket("udp", addr)
 	if err != nil {
-		return err
+		return "", nil, nil, err
 	}
 	ln, err := net.Listen("tcp", pc.LocalAddr().String())
 	if err != nil {
 		pc.Close()
-		return err
+		return "", nil, nil, err
 	}
-	errc := make(chan error, 2)
-	go func() { errc <- s.serveUDP(pc) }()
-	go func() { errc <- s.serveTCP(ln) }()
-	err = <-errc
-	pc.Close()
-	ln.Close()
-	return err
+	ch := make(chan error, 2)
+	go func() { ch <- s.serveUDP(pc) }()
+	go func() { ch <- s.serveTCP(ln) }()
+	return pc.LocalAddr().String(), ch, func() { pc.Close(); ln.Close() }, nil
 }
 
 func (s *TestServer) serveUDP(pc net.PacketConn) error {

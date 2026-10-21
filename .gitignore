@@ -12,3 +12,7 @@ reports.json
 /testing/children.zone
 # draft build byproducts
 /draft/*.v2v3.xml
+
+# sandbox build helpers
+/.go.*.mod
+/.go.*.sum
