@@ -24,6 +24,12 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+      - name: keep go.sum
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-sum
+          path: go.sum
       - name: vet
         run: go vet ./...
       - name: test
