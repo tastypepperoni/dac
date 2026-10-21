@@ -1,0 +1,64 @@
+; DAC test zone for "dac testdns".  Each child domain shows one behaviour.
+; Edit this file while testdns runs; it is reloaded automatically.
+
+; ---- The parent: bank.example (and its own parent, group.example) ----------
+_affiliation.bank.example.   3600 IN TXT "v=DAC1; p=group.example; t=onsxw2ldmvzhg5dpnz2gk43uozqwy2lk; r=mailto:abuse@bank.example; f=mailto:dac-reports@bank.example"
+_affiliation.group.example.  3600 IN TXT "v=DAC1"
+onsxw2ldmvzhg5dpnz2gk43uozqwy2lk._affiliation.group.example. 3600 IN TXT "v=DAC1; d=bank.example"
+
+; 1. embank.example: confirmed
+mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example. 3600 IN TXT "v=DAC1; d=embank.example"
+_affiliation.embank.example. 3600 IN TXT "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+; 2. copycat.example: copied embank's claim -> not-confirmed (confirmation names embank.example)
+_affiliation.copycat.example. 3600 IN TXT "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+; 3. fake.example: invented token -> not-confirmed
+_affiliation.fake.example. 3600 IN TXT "v=DAC1; p=bank.example; t=onxw2zjanfzsa4tbnzsg63jaon2hezlb"
+
+; 4. sold.example: the parent deleted the confirmation -> not-confirmed
+_affiliation.sold.example. 3600 IN TXT "v=DAC1; p=bank.example; t=k5uw4zlsonxw2zlusztgs3dfon2gk43u"
+
+; 5. promo.example: confirmed for every name below it, until the end of 2099
+nfzs4y3pnvygk4tbnvsxe43uojsxi5dz._affiliation.bank.example. 3600 IN TXT "v=DAC1; d=promo.example; s=subtree; x=2099-12-31"
+_affiliation.promo.example. 3600 IN TXT "v=DAC1; p=bank.example; t=nfzs4y3pnvygk4tbnvsxe43uojsxi5dz"
+
+; 6. campaign.example: confirmation expired -> not-confirmed
+mnwgk4tfnz2gk4tbnvsxe43uojsxi5d4._affiliation.bank.example. 3600 IN TXT "v=DAC1; d=campaign.example; x=2020-01-01"
+_affiliation.campaign.example. 3600 IN TXT "v=DAC1; p=bank.example; t=mnwgk4tfnz2gk4tbnvsxe43uojsxi5d4"
+
+; 7. twoclaims.example: two claims -> permerror
+_affiliation.twoclaims.example. 3600 IN TXT "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+_affiliation.twoclaims.example. 3600 IN TXT "v=DAC1; p=group.example; t=onsxw2ldmvzhg5dpnz2gk43uozqwy2lk"
+
+; 8. orphan.example: claims a parent that publishes no marker -> not-confirmed
+_affiliation.orphan.example. 3600 IN TXT "v=DAC1; p=nomarker.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+; 9. flaky.example: the parent's DNS fails -> temperror
+_affiliation.flaky.example. 3600 IN TXT "v=DAC1; p=down.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+_affiliation.down.example SERVFAIL
+
+; 10. hijack.example and hijack2.example: the wildcard attack (Section 11.7).
+;     Each parent has a wildcard CNAME into a hosting platform where an attacker
+;     controls the TXT record "v=DAC1; d=<victim>".
+;     shared.example has NO marker: the marker query itself is answered through
+;     the wildcard CNAME -> permerror; the attacker's record is never accepted.
+*.shared.example CNAME tenant.hosting.example
+tenant.hosting.example TXT "v=DAC1; d=hijack.example"
+_affiliation.hijack.example. 3600 IN TXT "v=DAC1; p=shared.example; t=gezdgnbvgy3tqojqgezdgnbvgy3tqojq"
+;     shared2.example HAS a marker: the wildcard cannot answer names below it,
+;     so the confirmation query gets NXDOMAIN -> not-confirmed.
+*.shared2.example CNAME tenant2.hosting.example
+tenant2.hosting.example TXT "v=DAC1; d=hijack2.example"
+_affiliation.shared2.example. 3600 IN TXT "v=DAC1"
+_affiliation.hijack2.example. 3600 IN TXT "v=DAC1; p=shared2.example; t=gezdgnbvgy3tqojqgezdgnbvgy3tqojq"
+
+; 11. testmode.example: parent in test mode -> confirmed, mode test
+_affiliation.trial.example. 3600 IN TXT "v=DAC1; m=test"
+mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.trial.example. 3600 IN TXT "v=DAC1; d=testmode.example"
+_affiliation.testmode.example. 3600 IN TXT "v=DAC1; p=trial.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+; 12. aliased.example: parent's marker is a CNAME -> permerror
+_affiliation.aliasparent.example CNAME elsewhere.example
+elsewhere.example TXT "v=DAC1"
+_affiliation.aliased.example. 3600 IN TXT "v=DAC1; p=aliasparent.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"

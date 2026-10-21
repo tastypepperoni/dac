@@ -1,0 +1,2621 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp "&#160;">
+  <!ENTITY zwsp "&#8203;">
+  <!ENTITY nbhy "&#8209;">
+  <!ENTITY wj "&#8288;">
+]>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude"
+     ipr="trust200902"
+     docName="draft-manelidis-dnsop-domain-affiliation-00"
+     category="std"
+     consensus="true"
+     submissionType="IETF"
+     xml:lang="en"
+     tocInclude="true"
+     tocDepth="3"
+     symRefs="true"
+     sortRefs="true"
+     version="3">
+
+  <front>
+    <title abbrev="Domain Affiliation Confirmation">Domain Affiliation Confirmation (DAC)</title>
+    <seriesInfo name="Internet-Draft" value="draft-manelidis-dnsop-domain-affiliation-00"/>
+
+    <author fullname="Dimitri Manelidis" initials="D." surname="Manelidis">
+      <address>
+        <email>tastypepperoni@gmail.com</email>
+      </address>
+    </author>
+
+    <date year="2026" month="October" day="21"/>
+
+    <area>Operations and Management</area>
+    <workgroup>Network Working Group</workgroup>
+
+    <keyword>DNS</keyword>
+    <keyword>affiliation</keyword>
+    <keyword>phishing</keyword>
+    <keyword>takedown</keyword>
+    <keyword>reputation</keyword>
+    <keyword>TXT</keyword>
+
+    <abstract>
+      <t>
+        Security systems assess domain names one at a time.  A new domain of an
+        established organization therefore starts with no reputation, and a
+        legitimate domain that resembles another organization's name can be
+        reported as an impersonation.  This document defines Domain Affiliation
+        Confirmation (DAC), by which the operator of a parent domain confirms that a
+        child domain is operated by it or under its authority.  The child publishes
+        a DNS record naming the parent and a random token; the parent confirms that
+        token, in the DNS or over HTTPS, by naming the child.  Verification takes at
+        most three DNS queries.  The parent publishes no list of its domains, and
+        an affiliation is ended by deleting one record.  The document also states
+        what a confirmation means to relying parties such as takedown services and
+        reputation systems.
+      </t>
+    </abstract>
+
+    <note removeInRFC="true">
+      <name>About This Document</name>
+      <t>
+        Discussion of this document takes place on the Domain Name System Operations
+        (DNSOP) Working Group mailing list (dnsop@ietf.org).  A reference
+        implementation with test vectors accompanies this draft (<xref target="impl"/>).
+      </t>
+    </note>
+  </front>
+
+  <middle>
+
+    <section anchor="intro">
+      <name>Introduction</name>
+
+      <section anchor="problem">
+        <name>Problem Statement</name>
+        <t>
+          Mail filters, browser warning systems, secure web gateways, and
+          brand-protection services evaluate domain names individually.  Two
+          consequences follow for organizations that operate more than one domain.
+        </t>
+        <dl newline="false" spacing="normal">
+          <dt>New domains start without reputation.</dt>
+          <dd>
+            When an organization launches a product or service under a new domain
+            name, that name is treated as unknown, and often as suspicious, because
+            nothing tells the evaluating system that it is operated by the same
+            organization as an established domain.
+          </dd>
+          <dt>Legitimate look-alikes are reported as impersonations.</dt>
+          <dd>
+            Brand-protection services search for newly registered names that resemble
+            their clients' names.  A legitimate domain of one organization can
+            resemble the name of an unrelated organization.  The service has no
+            standard way to learn that the domain is operated by an established
+            organization and may ask the domain's registrar or hosting provider to
+            suspend it.  Erroneous takedown requests can disable an entire
+            legitimate domain <xref target="ITCHIO"/>.
+          </dd>
+        </dl>
+        <t>
+          Both problems would be reduced if an evaluating system could ask a precise
+          question and get an answer from the party able to give it: "Does the
+          operator of this established domain confirm that it operates this other
+          domain?"  No deployed mechanism answers it.  Registration data
+          <xref target="RFC9083"/> is frequently redacted and was not designed to
+          express relationships between domains, and certificates bind keys to names,
+          not names to each other.
+        </t>
+      </section>
+
+      <section anchor="overview-intro">
+        <name>This Document</name>
+        <t>
+          This document defines Domain Affiliation Confirmation (DAC).  The domain to
+          be affiliated (the child) publishes a DNS record that names its parent
+          domain and carries a random token.  The parent confirms the affiliation by
+          publishing, under a name derived from that token, a record that names the
+          child.  A verifier reads the child's record, reads the parent's
+          confirmation, and checks that the confirmation names the child it started
+          from.
+        </t>
+        <t>
+          The document also states what a confirmation means
+          (<xref target="semantics"/>): the parent's operator indicates that it
+          operates the child or authorizes its operation, and that reports of abuse
+          concerning the child may be directed to it.  A relationship that relying
+          parties are not meant to act on would leave the problems above unsolved
+          (<xref target="rationale-meaning"/>).
+        </t>
+      </section>
+
+      <section anchor="goals">
+        <name>Design Goals</name>
+        <ol spacing="normal">
+          <li>
+            <t>
+              Only the parent can create an affiliation.  A claim the parent has not
+              confirmed has no effect, and a confirmation for one child cannot be
+              reused for another.
+            </t>
+          </li>
+          <li>
+            <t>
+              The parent publishes nothing from which its affiliated domains can be
+              listed.  Each child's claim is public, so affiliated domains can be
+              found by examining domains individually, as with any public DNS data.
+            </t>
+          </li>
+          <li>
+            <t>
+              An affiliation is ended by deleting one record at the parent, without
+              any change at the child.  The change takes effect within cache and
+              DNSSEC signature lifetimes (<xref target="sec-replay"/>).
+            </t>
+          </li>
+          <li>
+            <t>
+              No new key material.  The protocol relies on the parent's existing
+              control of its DNS zone or, optionally, its web origin.
+            </t>
+          </li>
+          <li>
+            <t>
+              Bounded cost.  Verification takes at most three TXT queries, plus one
+              HTTPS request and its address resolution when the parent uses that
+              channel, with no recursion and no searching.
+            </t>
+          </li>
+          <li>
+            <t>
+              Deployable with existing tools.  Records are TXT records at
+              underscored names <xref target="RFC8552"/>.
+            </t>
+          </li>
+          <li>
+            <t>
+              The verification procedure does not consult a list of public suffixes.
+              Every confirmation requires a record that only the parent's operator
+              can publish.
+            </t>
+          </li>
+        </ol>
+      </section>
+
+      <section anchor="nongoals">
+        <name>Non-Goals</name>
+        <t>
+          DAC does not establish the identity, legitimacy, or licensing of the
+          parent's operator.  It conveys a statement by whoever operates the parent
+          domain; whether that party deserves trust is for each relying party to
+          decide (<xref target="semantics"/>).
+        </t>
+        <t>
+          DAC does not express relationships between independent organizations, such
+          as partnerships or service providers (<xref target="rationale-transitive"/>).
+        </t>
+        <t>
+          DAC does not define where administrative boundaries in the DNS lie.
+          Relying parties may still need such information to decide which names to
+          evaluate.
+        </t>
+      </section>
+
+      <section anchor="related">
+        <name>Relationship to Other Work</name>
+        <t>
+          <xref target="I-D.ietf-dnsop-domain-verification-techniques"/> describes
+          how a service verifies that a user controls a domain.  DAC follows its
+          practices for TXT records at underscored names and for tokens, but records
+          a standing relationship between two domains rather than proving control of
+          one domain to one service.
+        </t>
+        <t>
+          <xref target="I-D.ietf-regext-epp-same-entity"/> lets a registry enforce
+          that a group of names in that registry is held by one registrant.  DAC
+          operates across registries and is published by the domains' operators.
+        </t>
+      </section>
+
+      <section anchor="bcp14">
+        <name>Requirements Language</name>
+        <t>
+          The key words "<bcp14>MUST</bcp14>", "<bcp14>MUST NOT</bcp14>",
+          "<bcp14>REQUIRED</bcp14>", "<bcp14>SHALL</bcp14>", "<bcp14>SHALL
+          NOT</bcp14>", "<bcp14>SHOULD</bcp14>", "<bcp14>SHOULD NOT</bcp14>",
+          "<bcp14>RECOMMENDED</bcp14>", "<bcp14>NOT RECOMMENDED</bcp14>",
+          "<bcp14>MAY</bcp14>", and "<bcp14>OPTIONAL</bcp14>" in this document are to
+          be interpreted as described in BCP&nbsp;14 <xref target="RFC2119"/>
+          <xref target="RFC8174"/> when, and only when, they appear in all capitals,
+          as shown here.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="terminology">
+      <name>Terminology</name>
+      <t>
+        DNS terms are used as defined in <xref target="RFC9499"/>.  This document
+        also uses the following terms.
+      </t>
+      <dl newline="false" spacing="normal">
+        <dt>Child domain:</dt>
+        <dd>The domain name whose affiliation is declared or verified.</dd>
+        <dt>Parent domain:</dt>
+        <dd>The domain name that the child domain names as its parent.</dd>
+        <dt>Parent operator:</dt>
+        <dd>
+          The party that controls the content of the parent domain's DNS zone or,
+          for confirmations over HTTPS, of the parent domain's HTTPS origin.
+        </dd>
+        <dt>Claim:</dt>
+        <dd>The TXT record published by the child domain (<xref target="claim"/>).</dd>
+        <dt>Marker:</dt>
+        <dd>
+          The TXT record by which a parent domain indicates that it participates and
+          selects a confirmation channel (<xref target="marker"/>).
+        </dd>
+        <dt>Confirmation:</dt>
+        <dd>
+          The record by which the parent domain confirms one claim, published in the
+          DNS (<xref target="confirmation"/>) or over HTTPS
+          (<xref target="https"/>).
+        </dd>
+        <dt>Token:</dt>
+        <dd>
+          A random value, unique to one child domain, that links a claim to its
+          confirmation (<xref target="tokens"/>).
+        </dd>
+        <dt>Verifier:</dt>
+        <dd>A party that carries out the procedure in <xref target="verify"/>.</dd>
+        <dt>Relying party:</dt>
+        <dd>
+          A party that makes decisions using verification results, such as a
+          takedown service, a mail filter, or a reputation system.
+        </dd>
+      </dl>
+      <t>
+        In examples, "bank.example" is the parent domain and "embank.example" is the
+        child domain <xref target="RFC2606"/>.  The token used in examples,
+        "mfrggzdfmztwq2lknnwg23tpobyxe43u", is illustrative and not random.
+      </t>
+    </section>
+
+    <section anchor="overview">
+      <name>Protocol Overview</name>
+      <t>
+        An affiliation consists of three records.  The claim is published by the
+        child; the marker and the confirmation are published by the parent.
+      </t>
+      <figure anchor="fig-overview">
+        <name>Records and Verification Steps</name>
+        <artwork type="ascii-art" align="left"><![CDATA[
+ Child: embank.example              Parent: bank.example
++-------------------------------+  +--------------------------------+
+| _affiliation.embank.example.  |  | _affiliation.bank.example.     |
+|   TXT "v=DAC1;                |  |   TXT "v=DAC1"        (marker) |
+|     p=bank.example;           |  |                                |
+|     t=<token>"        (claim) |  | <token>._affiliation.          |
++-------------------------------+  |        bank.example.           |
+                                   |   TXT "v=DAC1;                 |
+                                   |     d=embank.example"          |
+                                   |                 (confirmation) |
+                                   +--------------------------------+
+
+Verifier:
+ 1. TXT _affiliation.embank.example  -> p=bank.example, t=<token>
+ 2. TXT _affiliation.bank.example    -> marker, channel "dns"
+ 3. TXT <token>._affiliation.bank.example
+                                     -> d=embank.example
+ 4. d= equals the child domain       -> result "confirmed"
+]]></artwork>
+      </figure>
+      <t>
+        A claim copied to another domain fails because the confirmation names the
+        original child.  Confirmation names cannot be found without the
+        corresponding claims, because they contain the token.  The marker prevents
+        a wildcard elsewhere in the parent's zone from answering for confirmation
+        names (<xref target="sec-wildcard"/>) and tells the verifier which channel
+        the parent uses.
+      </t>
+    </section>
+
+    <section anchor="records">
+      <name>Records</name>
+
+      <section anchor="syntax">
+        <name>Common Syntax</name>
+        <t>
+          The three records share one tag-list syntax: a version tag followed by
+          zero or more tags, separated by semicolons.  The ABNF
+          <xref target="RFC5234"/> below uses case-sensitive strings
+          <xref target="RFC7405"/>; WSP, ALPHA, and DIGIT are the core rules of
+          <xref target="RFC5234"/>.
+        </t>
+        <sourcecode type="abnf" name="dac.abnf" markers="true"><![CDATA[
+record      = *WSP v-tag *( *WSP ";" *WSP tag ) [ *WSP ";" ] *WSP
+v-tag       = %s"v" *WSP "=" *WSP %s"DAC1"
+tag         = tag-name *WSP "=" *WSP tag-value
+tag-name    = ALPHA *( ALPHA / DIGIT / "_" )
+tag-value   = 1*tval-char
+tval-char   = %x21-3A / %x3C-7E        ; VCHAR except ";"
+
+p-value     = domain                   ; claim: parent domain
+t-value     = 26*52b32-char            ; claim: token
+c-value     = 1*tval-char              ; marker: channel
+m-value     = 1*tval-char              ; marker: mode
+r-value     = 1*tval-char              ; marker: abuse contact URI
+d-value     = domain                   ; confirmation: child domain
+s-value     = 1*tval-char              ; confirmation: scope
+x-value     = 4DIGIT "-" 2DIGIT "-" 2DIGIT ; confirmation: expiry
+f-value     = 1*tval-char              ; marker: report URI
+
+domain      = label *( "." label )
+label       = ld-char [ *61ldh-char ld-char ]
+ld-char     = %x61-7A / DIGIT          ; lowercase letters and digits
+ldh-char    = ld-char / "-"
+b32-char    = %x61-7A / %x32-37        ; RFC 4648 base32, lowercase
+]]></sourcecode>
+        <t>
+          A TXT record is a DAC record if its text, after any leading spaces or tabs,
+          begins with "v", optional whitespace, "=", optional whitespace, and
+          "DAC1", followed by whitespace, ";", or the end of the text.  Other TXT
+          records are ignored, so DAC records can share a name with other TXT
+          records.  A DAC record is well-formed if it matches the "record" rule,
+          contains no tag name more than once, and the value of every tag defined in
+          this document matches the rule given for it, with an "x" value that is also a
+          valid calendar date.  A DAC record that is not well-formed is malformed.
+        </t>
+        <ul spacing="normal">
+          <li>
+            <t>
+              Tag names are case-sensitive.  Verifiers <bcp14>MUST</bcp14> ignore
+              tags they do not recognize.  New tags are registered as described in
+              <xref target="iana-tags"/>; adding a tag does not change the version.
+            </t>
+          </li>
+          <li>
+            <t>
+              A TXT record consisting of several character-strings is interpreted as
+              their concatenation without separators, as in
+              <xref section="3.3" sectionFormat="of" target="RFC7208"/>.  Publishers
+              <bcp14>SHOULD</bcp14> keep each record within a single character-string
+              of at most 255 octets.
+            </t>
+          </li>
+          <li>
+            <t>
+              Domain names in records are in canonical form: A-labels
+              <xref target="RFC5890"/> in lowercase, without a trailing dot, at most
+              253 octets long, with a last label that is not entirely numeric.  A
+              label with hyphens in both the third and fourth
+              positions <bcp14>MUST</bcp14> be a valid A-label.  The "domain" rule
+              expresses the character-level constraints; a name violating the others
+              is malformed.  Verifiers do not repair names.
+            </t>
+          </li>
+        </ul>
+      </section>
+
+      <section anchor="claim">
+        <name>Claim Record</name>
+        <t>
+          A child domain declares its parent with one TXT record at the name formed by
+          prepending the label "_affiliation" to the child domain:
+        </t>
+        <sourcecode type="dns-rr"><![CDATA[
+_affiliation.embank.example. 3600 IN TXT
+    "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+]]></sourcecode>
+        <dl newline="false" spacing="normal">
+          <dt>p (required):</dt>
+          <dd>The parent domain, matching the "p-value" rule.</dd>
+          <dt>t (required):</dt>
+          <dd>The token, matching the "t-value" rule (<xref target="tokens"/>).</dd>
+        </dl>
+        <t>
+          A child domain has at most one parent and <bcp14>MUST NOT</bcp14> publish
+          more than one DAC record at its "_affiliation" name; a domain that is also
+          a parent includes its marker tags in the same record
+          (<xref target="marker"/>).  The parent domain
+          <bcp14>MUST NOT</bcp14> be the child domain itself.  The claim name
+          <bcp14>MAY</bcp14> be a CNAME, for example when the child's records are
+          managed by the parent's operator.
+        </t>
+      </section>
+
+      <section anchor="scope">
+        <name>Scope of an Affiliation</name>
+        <t>
+          A claim is published at, and an affiliation is verified for, one domain
+          name.  Organizations typically publish claims at their registrable domains,
+          such as "embank.example", not at every host name.
+        </t>
+        <t>
+          A relying party assessing a name below such a domain, for example
+          "marketing.embank.example", determines the domain it regards as responsible
+          for that name, as it already does when attributing reputation, and verifies
+          that domain.  Claims are not published at names like
+          "marketing.embank.example" for this purpose.
+        </t>
+        <t>
+          By default, a confirmation states nothing about names below the child
+          domain, and relying parties apply their usual practice to them.  A parent
+          that operates, or authorizes the operation of, every name below the child
+          states this by including the "s" tag with the value "subtree" in the
+          confirmation (<xref target="confirmation"/>).  The confirmation then also
+          covers every name below the child.  A parent <bcp14>MUST NOT</bcp14> include
+          it when names below the child are operated by parties not acting under the
+          parent's authority, such as customers of a hosting or platform service
+          (<xref target="sec-subtree"/>).
+        </t>
+        <t>
+          If a name below a child with a subtree confirmation publishes its own
+          claim, that claim governs the name and the names below it.
+        </t>
+      </section>
+
+      <section anchor="marker">
+        <name>Marker Record</name>
+        <t>
+          A parent domain that confirms affiliations publishes exactly one DAC record
+          at the name formed by prepending "_affiliation" to the parent domain.  A
+          domain that is both a child and a parent publishes a single record there
+          containing both the claim tags and the marker tags.
+        </t>
+        <sourcecode type="dns-rr"><![CDATA[
+_affiliation.bank.example. 3600 IN TXT
+    "v=DAC1; r=mailto:abuse@bank.example"
+]]></sourcecode>
+        <dl newline="false" spacing="normal">
+          <dt>c (optional):</dt>
+          <dd>
+            The confirmation channel.  This document defines "dns", the default
+            (<xref target="confirmation"/>), and "https" (<xref target="https"/>).
+            Other values are registered as described in
+            <xref target="iana-channels"/>.  With "https", DNS confirmation records
+            are not consulted.
+          </dd>
+          <dt>r (optional):</dt>
+          <dd>
+            A URI <xref target="RFC3986"/> for reports of abuse concerning the
+            parent's affiliated domains, with scheme "mailto"
+            <xref target="RFC6068"/> or "https".  Semicolons and whitespace in the
+            URI are percent-encoded.  Verifiers ignore an "r" tag with any other
+            scheme.
+          </dd>
+          <dt>m (optional):</dt>
+          <dd>
+            The mode: "enforce", the default, or "test".  In "test" mode the parent
+            is deploying the protocol and asks that its confirmations not be acted
+            on (<xref target="ops-staged"/>).  Verifiers treat any value other than
+            "enforce" as "test".
+          </dd>
+          <dt>f (optional):</dt>
+          <dd>
+            A URI to which verifiers may send reports of claims naming this parent
+            that were not confirmed (<xref target="reports"/>).  It is either
+            "https://" followed by a host and an optional path, without userinfo,
+            port, query, or fragment, or "mailto:" followed by exactly one address,
+            without header fields.  The host, or the domain of the address, is in
+            canonical form (<xref target="syntax"/>) and is the parent domain or a
+            name below it.  Verifiers ignore an "f" tag that does not meet these
+            conditions.
+          </dd>
+        </dl>
+        <t>
+          The marker <bcp14>MUST</bcp14> be a TXT record owned by the
+          "_affiliation" name itself, not data reached through a CNAME or DNAME
+          record.  The marker makes "_affiliation" an
+          existing node in the parent zone, so that a wildcard higher in the zone
+          cannot answer for names below it (<xref target="sec-wildcard"/>).  The
+          "_affiliation" name <bcp14>MAY</bcp14> be delegated as a separate zone, in
+          which case that zone's operator publishes the marker and confirmations.  A
+          DNAME record <xref target="RFC6672"/> at that name redirects the queries for
+          confirmations to another zone and has the same effect as delegating them.
+        </t>
+      </section>
+
+      <section anchor="confirmation">
+        <name>Confirmation Record (DNS Channel)</name>
+        <t>
+          For each confirmed child, a parent using the DNS channel publishes one TXT
+          record at the name formed by prepending the child's token to the parent's
+          "_affiliation" name:
+        </t>
+        <sourcecode type="dns-rr"><![CDATA[
+mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example.
+    3600 IN TXT "v=DAC1; d=embank.example"
+]]></sourcecode>
+        <dl newline="false" spacing="normal">
+          <dt>d (required):</dt>
+          <dd>The child domain, matching the "d-value" rule.</dd>
+          <dt>s (optional):</dt>
+          <dd>
+            The scope.  The value "subtree" states that the confirmation also covers
+            every name below the child domain (<xref target="scope"/>).  Verifiers
+            ignore any other value; other scopes would be defined with a new tag.
+          </dd>
+          <dt>x (optional):</dt>
+          <dd>
+            The last day of validity, as a full-date in UTC <xref target="RFC3339"/>,
+            matching the "x-value" rule.  The confirmation applies until the end of
+            that day, 23:59:59 UTC, and not afterwards.  Without "x", the
+            confirmation applies until it is removed.
+          </dd>
+        </dl>
+        <t>
+          An expiry date suits domains used for a limited time, such as campaign
+          sites, and also limits the consequences of a confirmation that is not
+          removed when its domain changes hands (<xref target="sec-stale"/>), for
+          example when it is set to the domain's registration expiry date and updated
+          on renewal.  A parent extends a confirmation by replacing the record with
+          one carrying a later date.  Registration expiry dates normally move forward
+          when domains renew automatically, so a parent tying "x" to them updates
+          the confirmation at each renewal.
+        </t>
+        <t>
+          A confirmation name <bcp14>MUST NOT</bcp14> hold more than one DAC record.
+          It <bcp14>MAY</bcp14> be a CNAME, for example to a name hosted by a DNS
+          provider.  The parent <bcp14>MUST NOT</bcp14> publish wildcard records at or
+          below its "_affiliation" name.
+        </t>
+      </section>
+
+      <section anchor="tokens">
+        <name>Tokens</name>
+        <t>
+          A token links one claim to one confirmation.  It makes confirmation names
+          unpredictable, so that a parent's confirmations cannot be found by guessing
+          names, whether by online queries or, for DNSSEC-signed zones using NSEC3,
+          by offline guessing of hashed names.  A token is not a secret: it is
+          published in the claim and appears in queries.  The protocol's resistance
+          to forged affiliations does not depend on tokens being unknown
+          (<xref target="sec-copy"/>).
+        </t>
+        <ul spacing="normal">
+          <li>
+            <t>
+              A token <bcp14>MUST</bcp14> contain at least 128 bits, and
+              <bcp14>SHOULD</bcp14> contain 160 bits, from a cryptographically secure
+              random source <xref target="RFC4086"/>.  At 128 bits, guessing a
+              confirmation name is infeasible and collisions between tokens are
+              negligible.
+            </t>
+          </li>
+          <li>
+            <t>
+              A token is encoded in base32 (<xref section="6" sectionFormat="of"
+              target="RFC4648"/>) with lowercase letters and without padding, giving
+              26 to 52 characters; a 160-bit token is 32 characters, well within the
+              63-octet limit on a DNS label <xref target="RFC1035"/>.  Case-sensitive
+              encodings such as base64 cannot be used, because DNS name matching
+              ignores case <xref target="RFC4343"/> and some resolvers alter the case
+              of query names.
+            </t>
+          </li>
+          <li>
+            <t>
+              Tokens are opaque; verifiers do not decode them.  A parent
+              <bcp14>MUST</bcp14> use a different token for each child and
+              <bcp14>SHOULD</bcp14> use a new token when re-establishing an
+              affiliation that was previously ended.
+            </t>
+          </li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="publish">
+      <name>Publishing an Affiliation</name>
+
+      <section anchor="publish-create">
+        <name>Creating an Affiliation</name>
+        <ol spacing="normal">
+          <li>The parent operator publishes the marker, once, before its first affiliation.</li>
+          <li>
+            The parent operator generates a token for the child and publishes the
+            confirmation (<xref target="confirmation"/> or <xref target="https"/>).
+          </li>
+          <li>
+            The child's operator publishes the claim.  When parent and child are
+            operated by the same organization, one tool performs all of these steps
+            (<xref target="ops-automation"/>).
+          </li>
+        </ol>
+        <t>
+          Publishing the confirmation first lets the affiliation verify as soon as
+          the claim is visible.
+        </t>
+      </section>
+
+      <section anchor="publish-end">
+        <name>Ending an Affiliation</name>
+        <t>
+          The parent operator ends an affiliation by removing the confirmation; no
+          change at the child is needed.  A parent operator <bcp14>MUST</bcp14>
+          remove the confirmation for a child domain that it no longer operates or
+          authorizes, including when the child domain is transferred, sold, or
+          allowed to expire, except as described in <xref target="publish-move"/>.  A claim left in the child's zone, or copied there by a
+          later registrant, has no effect once the confirmation is gone.
+        </t>
+        <t>
+          A parent that withdraws from the protocol removes its marker, which ends
+          all of its affiliations.
+        </t>
+      </section>
+
+      <section anchor="publish-move">
+        <name>Moving a Child to Another Parent</name>
+        <t>
+          When a child domain moves from one parent to another, for example after an
+          acquisition, the operators proceed in this order so that the child remains
+          confirmed throughout:
+        </t>
+        <ol spacing="normal">
+          <li>
+            The new parent publishes its marker, if it has none, and a confirmation
+            for the child under a new token.
+          </li>
+          <li>
+            The child replaces its claim with one naming the new parent and the new
+            token.
+          </li>
+          <li>
+            After verifying that the child's claim names the new parent, and after the
+            TTL of the old claim has passed (86400 seconds if the old parent does not
+            know it), the old parent removes its confirmation.
+          </li>
+        </ol>
+        <t>
+          If the child domain leaves both organizations, for example because it is
+          sold, the parent removes its confirmation no later than the transfer
+          (<xref target="publish-end"/>), and the child's new operator replaces or
+          removes the claim.
+        </t>
+      </section>
+
+      <section anchor="publish-levels">
+        <name>Organizations with Several Levels</name>
+        <t>
+          A parent domain can itself be the child domain of another affiliation, for
+          example when a subsidiary's primary domain is affiliated with its group's
+          primary domain.  Each affiliation is confirmed separately and means only
+          what <xref target="semantics"/> states about that pair: a confirmation of
+          the parent by its own parent says nothing about the parent's children.
+          Verifiers <bcp14>MAY</bcp14> repeat the procedure with the parent domain
+          as the child domain.  A verifier that does so <bcp14>MUST NOT</bcp14>
+          follow more than two levels beyond the first parent and
+          <bcp14>MUST</bcp14> stop if a domain repeats.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="verify">
+      <name>Verification</name>
+
+      <section anchor="verify-io">
+        <name>Inputs and Outputs</name>
+        <t>
+          The input is a child domain in canonical form (<xref target="syntax"/>).
+          Verifiers that accept names containing non-ASCII characters convert them to
+          A-labels as specified in <xref target="RFC5891"/>; the processing of
+          <xref target="UTS46"/> with non-transitional processing is a common way of
+          doing so.  A name that cannot be converted yields "permerror".
+        </t>
+        <t>
+          The output is a result (<xref target="results"/>) and, when available, the
+          parent domain, the channel, whether the result is authenticated
+          (<xref target="verify-auth"/>), whether the confirmation covers names below
+          the child domain (<xref target="scope"/>), the parent's mode and abuse
+          contact, and the time for which the result may be reused (<xref target="verify-cache"/>).
+        </t>
+      </section>
+
+      <section anchor="verify-steps">
+        <name>Procedure</name>
+        <t>
+          Verifiers <bcp14>MUST</bcp14> use a DNS interface that exposes the answer
+          section of responses, so that CNAME <xref target="RFC1034"/> and DNAME
+          <xref target="RFC6672"/> records in an answer can be detected.  In the steps below, "no record" means that the query returned
+          NXDOMAIN, or NOERROR with no DAC record; this includes a name that exists
+          only as an empty non-terminal.  NXDOMAIN and NOERROR without data are
+          treated alike because servers differ in which they return.  Other DNS
+          outcomes are handled as described in <xref target="verify-dns-errors"/>.
+        </t>
+        <ol spacing="normal">
+          <li>
+            <t>Query TXT at "_affiliation." followed by the child domain.</t>
+            <ul>
+              <li>No record: the result is "none".</li>
+              <li>More than one DAC record, or a malformed one: "permerror".</li>
+              <li>
+                Neither a "p" nor a "t" tag: the record is only a marker, and the
+                result is "none".
+              </li>
+              <li>
+                Only one of "p" and "t", or "p" equal to the child domain:
+                "permerror".
+              </li>
+            </ul>
+          </li>
+          <li>
+            <t>
+              Query TXT at "_affiliation." followed by the parent domain.  Any "p"
+              and "t" tags in the marker belong to the parent's own claim and are
+              ignored here.  Apply the following checks in order.
+            </t>
+            <ol type="a">
+              <li>The answer contains a CNAME or DNAME record: "permerror".</li>
+              <li>No record: "not-confirmed".</li>
+              <li>More than one DAC record, or a malformed one: "permerror".</li>
+              <li>
+                A "c" value not supported by the verifier: "not-confirmed".
+              </li>
+            </ol>
+          </li>
+          <li>
+            <t>
+              If the channel is "dns", query TXT at the token, followed by
+              "._affiliation.", followed by the parent domain.
+            </t>
+            <ul>
+              <li>No record: "not-confirmed".</li>
+              <li>More than one DAC record, or a malformed one: "permerror".</li>
+            </ul>
+            <t>
+              If the channel is "https", obtain the confirmation as described in
+              <xref target="https"/>.
+            </t>
+          </li>
+          <li>
+            <t>Examine the confirmation's "d" tag.</t>
+            <ul>
+              <li>Missing: "permerror".</li>
+              <li>Not equal to the child domain: "not-confirmed".</li>
+              <li>
+                Equal to the child domain, but the confirmation has an "x" tag and the
+                time of verification is after the end of that day: "not-confirmed".
+              </li>
+              <li>
+                Otherwise: "confirmed".  If the confirmation has "s=subtree", the
+                verifier reports that the result covers names below the child
+                domain.
+              </li>
+            </ul>
+          </li>
+        </ol>
+        <t>
+          Domain names are compared as octet strings in canonical form.  The
+          procedure does not query any other names, follow references found in
+          record content, or consult a list of public suffixes.
+        </t>
+      </section>
+
+      <section anchor="results">
+        <name>Results</name>
+        <dl newline="false" spacing="normal">
+          <dt>confirmed:</dt>
+          <dd>The parent confirms the child.</dd>
+          <dt>not-confirmed:</dt>
+          <dd>
+            The child claims a parent, and the verifier did not obtain a confirmation.
+            This covers a parent that does not participate, an ended affiliation, a
+            copied or fabricated claim, and a channel the verifier does not support.
+          </dd>
+          <dt>none:</dt>
+          <dd>The child makes no claim.</dd>
+          <dt>temperror:</dt>
+          <dd>A temporary failure prevented a result; the verifier can retry later.</dd>
+          <dt>permerror:</dt>
+          <dd>
+            A record is malformed or the configuration is invalid; the result will
+            not change until a record is corrected.
+          </dd>
+        </dl>
+        <t>Only "confirmed" establishes an affiliation.</t>
+      </section>
+
+      <section anchor="verify-dns-errors">
+        <name>DNS Errors</name>
+        <t>
+          Any response code other than NOERROR and NXDOMAIN, a timeout, or a
+          truncated response that cannot be retried over TCP yields "temperror".  A
+          response that fails DNSSEC validation ("bogus" <xref target="RFC4035"/>)
+          also yields "temperror" and <bcp14>MUST NOT</bcp14> contribute to a
+          "confirmed" result.  Verifiers <bcp14>MUST</bcp14> support DNS over TCP.
+        </t>
+      </section>
+
+      <section anchor="verify-auth">
+        <name>Authenticated Results</name>
+        <t>
+          For the DNS channel, a result is authenticated if all DNS answers used were
+          validated as secure <xref target="RFC4035"/>, either by the verifier or by
+          a validating resolver reached over a trusted path.
+        </t>
+        <t>
+          For the HTTPS channel, the Web PKI authenticates the confirmation, but the
+          decision to use that channel was taken from the marker.  The result is
+          authenticated only if the claim and the marker were validated as secure.
+          Otherwise, a forged marker could select the HTTPS channel for a parent that
+          does not use it (<xref target="sec-spoof"/>).
+        </t>
+        <t>
+          Verifiers report whether a result is authenticated.  The abuse contact is
+          taken from the marker and is authenticated only when the marker is.
+        </t>
+      </section>
+
+      <section anchor="verify-cache">
+        <name>Caching</name>
+        <t>
+          A verifier <bcp14>MAY</bcp14> reuse a result for the smallest of: the TTLs
+          <xref target="RFC2181"/> of the DNS answers used, where the TTL of a negative answer is determined as
+          in <xref target="RFC2308"/>; the freshness lifetime of the HTTPS response
+          (<xref target="https-fetch"/>); the time remaining until a confirmation's
+          expiry; and 86400 seconds.
+        </t>
+        <t>
+          After "temperror", verifiers retry with increasing intervals and
+          <bcp14>SHOULD NOT</bcp14> retry more often than once a minute.  Resolvers
+          that serve stale data <xref target="RFC8767"/> can extend the time for
+          which an ended affiliation still verifies.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="https">
+      <name>HTTPS Channel</name>
+      <t>
+        A parent whose marker contains "c=https" publishes confirmations as HTTPS
+        resources instead of DNS records, which suits operators that manage such
+        data through a web application rather than their DNS provider.  The claim
+        and the marker remain DNS records; selecting this channel is done in the
+        parent's DNS zone.
+      </t>
+
+      <section anchor="https-resource">
+        <name>Resource</name>
+        <t>The confirmation for a token is the resource identified by:</t>
+        <artwork type="ascii-art"><![CDATA[
+https://<parent domain>/.well-known/affiliation/<token>
+]]></artwork>
+        <t>
+          A confirmed token is served with status code 200 and media type
+          "text/plain".  The content is one DAC confirmation record, with the same
+          syntax as in the DNS, optionally followed by a single CRLF or LF:
+        </t>
+        <artwork type="ascii-art"><![CDATA[
+Request:
+  GET https://bank.example/.well-known/affiliation/
+              mfrggzdfmztwq2lknnwg23tpobyxe43u
+  Accept: text/plain
+
+Response:
+  200 OK
+  Content-Type: text/plain
+  Cache-Control: max-age=3600
+
+  v=DAC1; d=embank.example
+]]></artwork>
+        <t>
+          A token that is not confirmed is answered with 404 (Not Found) or 410
+          (Gone).
+        </t>
+      </section>
+
+      <section anchor="https-fetch">
+        <name>Fetching</name>
+        <t>A verifier fetching a confirmation:</t>
+        <ul spacing="normal">
+          <li>
+            <bcp14>MUST</bcp14> use the "https" scheme on port 443, with the parent
+            domain as the host, and <bcp14>MUST</bcp14> validate the server's
+            certificate for that name <xref target="RFC9110"/>
+            <xref target="RFC9525"/>;
+          </li>
+          <li>
+            <bcp14>MUST NOT</bcp14> follow redirects;
+          </li>
+          <li>
+            <bcp14>MUST NOT</bcp14> connect to addresses that the IANA special-purpose
+            address registries <xref target="RFC6890"/> mark as not globally
+            reachable, and <bcp14>MUST</bcp14> connect to the address it checked;
+          </li>
+          <li>
+            <bcp14>MUST NOT</bcp14> send cookies or other credentials; and
+          </li>
+          <li>
+            <bcp14>MUST</bcp14> read no more than 1024 octets of content and
+            <bcp14>SHOULD</bcp14> limit the request to 10 seconds.
+          </li>
+        </ul>
+        <t>Responses are handled as follows:</t>
+        <ul spacing="normal">
+          <li>
+            200 with media type "text/plain" (parameters are ignored) and content
+            that is exactly one DAC record: the record is the confirmation, examined
+            as in step 4 of <xref target="verify-steps"/>.  A malformed record,
+            other content, another media type, or more than 1024 octets yields
+            "permerror".
+          </li>
+          <li>404 or 410: "not-confirmed".</li>
+          <li>5xx, a connection failure, a timeout, or a TLS failure: "temperror".</li>
+          <li>
+            Any other status code, including 3xx, or a parent domain that has no
+            globally reachable address: "permerror".
+          </li>
+        </ul>
+        <t>
+          The freshness lifetime of a response is zero if it carries Cache-Control
+          no-store or no-cache, is otherwise taken from a max-age directive if
+          present, and is otherwise 3600 seconds.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="semantics">
+      <name>Meaning of a Confirmation</name>
+      <t>
+        This section states what a "confirmed" result means, so that relying parties
+        can use it consistently.  It does not prescribe relying-party policy.
+      </t>
+
+      <section anchor="semantics-what">
+        <name>What a Confirmation States</name>
+        <t>
+          A "confirmed" result means that, at the time of verification, the parent
+          operator had published a statement that:
+        </t>
+        <ol spacing="normal">
+          <li>
+            the child domain is operated by the parent operator or by a party acting
+            under its authority; and
+          </li>
+          <li>
+            reports of abuse concerning the child domain may be directed to the
+            parent operator, at the contact in the marker or by its usual means.
+          </li>
+        </ol>
+        <t>
+          With "s=subtree", both statements also apply to every name below the child
+          domain.
+        </t>
+        <t>
+          The second element distinguishes an affiliation from a mere association:
+          a parent that confirms a child is the expected recipient of complaints
+          about it.  The statement is made by whoever controls the parent domain's
+          DNS zone, or its HTTPS origin when that channel is used.
+        </t>
+      </section>
+
+      <section anchor="semantics-not">
+        <name>What a Confirmation Does Not State</name>
+        <t>
+          A confirmation says nothing about the trustworthiness, identity, or
+          licensing of the parent operator, or about the content served by the child.
+          A confirmation from a parent domain registered yesterday is as valid as one
+          from a long-established organization.  A confirmation therefore conveys at
+          most the standing that a relying party already attributes to the parent
+          domain.
+        </t>
+      </section>
+
+      <section anchor="semantics-use">
+        <name>Considerations for Relying Parties</name>
+        <ul spacing="normal">
+          <li>
+            <t>
+              Takedown decisions.  When a domain resembling a protected name is
+              confirmed as affiliated with a parent that the relying party already
+              regards as legitimate, the resemblance is unlikely to be an
+              impersonation of the parent's own name, and a conflict with another
+              organization's name is a dispute between organizations.  Relying
+              parties can direct such reports to the parent's abuse contact or to the
+              dispute processes for name conflicts.  A confirmation alone does not
+              justify delaying action on abuse that has been observed
+              (<xref target="sec-deflect"/>).
+            </t>
+          </li>
+          <li>
+            <t>
+              Reputation.  A relying party may extend to a confirmed child some or
+              all of the reputation it attributes to the parent.  Attributing more
+              standing to the child than to the parent is inconsistent with the
+              meaning above, and taking abuse observed on a confirmed child into
+              account when assessing the parent gives parent operators a reason to
+              confirm only domains they control.
+            </t>
+          </li>
+          <li>
+            <t>
+              Testing mode.  Confirmations from a parent in "test" mode are intended
+              for reporting to the parent, not for decisions.
+            </t>
+          </li>
+          <li>
+            <t>
+              Other results.  "none", "not-confirmed", "temperror", and "permerror"
+              are not, by themselves, evidence that a domain is malicious.  Most
+              domains publish no claim.  A claim that a well-known parent does not
+              confirm may be an attempt to borrow its standing, but it may also result
+              from misconfiguration or from records an attacker caused to appear in a
+              victim's zone (<xref target="sec-false-signal"/>).
+            </t>
+          </li>
+          <li>
+            <t>
+              Assurance.  Relying parties taking consequential actions can consider
+              whether a result was authenticated (<xref target="verify-auth"/>) and,
+              for unauthenticated results, the measures in
+              <xref target="sec-spoof"/>.
+            </t>
+          </li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="reports">
+      <name>Failure Reports</name>
+      <t>
+        A parent can ask verifiers to report claims that name it but are not
+        confirmed, for example by a domain that copied a claim or fabricated one.
+        Such reports let the parent learn about attempts to borrow its standing, and
+        about confirmations that have expired or been removed by mistake.  Sending
+        reports is optional for verifiers.
+      </t>
+
+      <section anchor="reports-when">
+        <name>When Reports Are Sent</name>
+        <t>
+          A verifier <bcp14>MAY</bcp14> send a report when it obtained the parent's
+          marker, the marker carries an "f" tag, and the result is "not-confirmed" or
+          "permerror" for a reason arising after step 2 of
+          <xref target="verify-steps"/>, that is, a missing, mismatched, expired, or
+          malformed confirmation, or a confirmation that could not be obtained over
+          HTTPS.  Reports are not sent for "temperror" or for an unsupported channel.
+          Reports are particularly useful while a parent is in "test" mode, and
+          verifiers may send them then.
+        </t>
+        <t>
+          A verifier <bcp14>MUST NOT</bcp14> send a report to an "f" URI that does not
+          meet the conditions in <xref target="marker"/>; in particular, reports go
+          only to the parent domain or names below it, which prevents a marker from
+          directing reports at third parties.  A parent that wants reports processed
+          by a provider points a name below its domain, or its mail routing, at that
+          provider.  Because an attacker can create any number of child domains, a
+          verifier <bcp14>MUST</bcp14> send at most one message per report
+          destination in 24 hours, combining reports into it, and
+          <bcp14>SHOULD</bcp14> limit the number of reports per message, for example
+          to 1000.
+        </t>
+      </section>
+
+      <section anchor="reports-format">
+        <name>Report Format</name>
+        <t>
+          A report is a JSON <xref target="RFC8259"/> array of objects, each with the
+          following members:
+        </t>
+        <dl newline="false" spacing="normal">
+          <dt>version:</dt><dd>The string "DAC1".</dd>
+          <dt>observed:</dt>
+          <dd>The time of verification, as an RFC 3339 date-time <xref target="RFC3339"/> in UTC.</dd>
+          <dt>child:</dt><dd>The child domain, in canonical form.</dd>
+          <dt>parent:</dt><dd>The parent domain, in canonical form.</dd>
+          <dt>result:</dt><dd>"not-confirmed" or "permerror".</dd>
+          <dt>reason:</dt>
+          <dd>
+            One of the values in the "DAC Report Reasons" registry
+            (<xref target="iana-reasons"/>).
+          </dd>
+          <dt>reporter (optional):</dt>
+          <dd>A domain name identifying the organization sending the report.</dd>
+        </dl>
+        <sourcecode type="json"><![CDATA[
+[
+  {
+    "version": "DAC1",
+    "observed": "2026-10-22T09:30:00Z",
+    "child": "embank-login.example",
+    "parent": "bank.example",
+    "result": "not-confirmed",
+    "reason": "different-child",
+    "reporter": "filter.example"
+  }
+]
+]]></sourcecode>
+        <t>
+          Receivers ignore members and reason values they do not recognize.
+        </t>
+      </section>
+
+      <section anchor="reports-transport">
+        <name>Delivery</name>
+        <t>
+          For an "https" URI, the verifier sends the report in an HTTP POST request
+          with media type "application/json", subject to the same restrictions as in
+          <xref target="https-fetch"/>, except that the content may be up to 65536
+          octets.  For a "mailto" URI, the verifier sends an email message with the
+          subject "DAC report for" followed by the parent domain, whose body, or one
+          of whose body parts, is the report with media type "application/json".
+          Verifiers <bcp14>SHOULD</bcp14> send report email from a domain that
+          authenticates its mail, so that receivers can filter it.  Failure to
+          deliver a report is not retried more than once.
+        </t>
+      </section>
+
+      <section anchor="reports-handling">
+        <name>Handling Reports</name>
+        <t>
+          Reports are unauthenticated assertions by whoever sent them.  A parent
+          treats a report as a prompt to verify the named child itself, not as
+          evidence, and rate-limits what it accepts.  Reports are not a substitute for
+          the monitoring described in <xref target="ops-monitor"/>.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="ops">
+      <name>Operational Considerations</name>
+
+      <section anchor="ops-automation">
+        <name>Automation and Inventory</name>
+        <t>
+          Unless an expiry date is used, the records contain no dates, so creating an
+          affiliation is a one-time operation with nothing to renew.  An organization with many domains
+          maintains the records with a tool that generates tokens and writes records
+          through its DNS providers' interfaces.
+        </t>
+        <t>
+          Affiliations go stale when domains change hands.  The most reliable control
+          is to derive confirmations from the organization's registrar accounts or
+          domain inventory, so that a confirmation is removed when its domain leaves
+          the inventory.  Registrars and DNS providers can offer this as a service.
+        </t>
+      </section>
+
+      <section anchor="ops-ttl">
+        <name>TTLs, Signatures, and Revocation Time</name>
+        <t>
+          The time for an ended affiliation to stop verifying is normally bounded by
+          the TTL of the confirmation (or the freshness lifetime of the HTTPS
+          confirmation) and by the 86400-second limit in
+          <xref target="verify-cache"/>; serve-stale resolvers and replay can extend
+          it (<xref target="verify-cache"/>, <xref target="sec-replay"/>).  A TTL of 3600
+          seconds is a reasonable default.  For signed zones, the validity period of
+          signatures over confirmation records also bounds how long a deleted
+          confirmation can be replayed (<xref target="sec-replay"/>); parents
+          wanting prompt revocation keep it short for names below "_affiliation".
+          The negative-caching TTL of the parent zone affects how soon a new
+          confirmation becomes visible.
+        </t>
+      </section>
+
+      <section anchor="ops-staged">
+        <name>Staged Deployment</name>
+        <t>
+          A parent can publish its marker with "m=test", create confirmations, and
+          check results before changing the marker to "enforce".  Relying parties
+          can likewise verify in a reporting-only mode before acting on results.
+        </t>
+      </section>
+
+      <section anchor="ops-channels">
+        <name>Choosing and Changing Channels</name>
+        <t>
+          The DNS channel needs only DNS records and benefits from DNSSEC.  The HTTPS
+          channel suits parents that prefer to manage confirmations in a web
+          application; it requires that the parent domain itself serve HTTPS on port
+          443 without redirecting, which many organizations' apex domains do not do
+          by default.  A parent that changes channel publishes confirmations in the
+          new channel before changing the marker and removes the old ones after the
+          marker's TTL has passed.
+        </t>
+        <t>
+          Confirmations may be hosted by a DNS provider through CNAME records or by
+          delegating the "_affiliation" name; the provider can then create and remove
+          confirmations (<xref target="sec-wildcard"/>).
+        </t>
+      </section>
+
+      <section anchor="ops-load">
+        <name>Load and Scale</name>
+        <t>
+          Verification costs at most three TXT queries.  Markers are shared by all
+          children of a parent and are cached accordingly.  Most domains publish no
+          claim, and for them the cost is one query.  A parent using the HTTPS
+          channel receives a request for each verification of one of its children
+          that is not answered from a cache; such parents <bcp14>SHOULD</bcp14> serve
+          confirmations from infrastructure able to handle that load and
+          <bcp14>SHOULD</bcp14> set a Cache-Control max-age.
+        </t>
+      </section>
+
+      <section anchor="ops-dns">
+        <name>DNS Configuration</name>
+        <ul spacing="normal">
+          <li>
+            Parents <bcp14>SHOULD</bcp14> sign their zones with DNSSEC so that
+            verifiers can obtain authenticated results.  A signed parent zone
+            <bcp14>SHOULD</bcp14> use NSEC3 <xref target="RFC5155"/> with the
+            parameters in <xref target="RFC9276"/>, compact denial of existence
+            <xref target="RFC9824"/>, or minimally covering NSEC records
+            <xref target="RFC4470"/>, and <bcp14>SHOULD NOT</bcp14> use NSEC records
+            that allow the zone to be walked (<xref target="privacy"/>).
+          </li>
+          <li>
+            Parents <bcp14>SHOULD</bcp14> restrict zone transfers to their own
+            secondary servers <xref target="RFC5936"/> <xref target="RFC9103"/>.
+          </li>
+          <li>
+            Parents and children <bcp14>MUST NOT</bcp14> publish wildcard records at
+            or below their "_affiliation" names, and <bcp14>SHOULD NOT</bcp14> publish
+            wildcard CNAME records that cover those names.
+          </li>
+        </ul>
+      </section>
+
+      <section anchor="ops-monitor">
+        <name>Monitoring</name>
+        <t>
+          Parent operators can check newly observed domains, for example from
+          Certificate Transparency logs, for claims naming their domain.  A claim
+          carrying a token the parent did not issue indicates a domain attempting to
+          borrow its standing; a claim for a domain no longer in the parent's
+          inventory indicates a confirmation that should already have been removed.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="security">
+      <name>Security Considerations</name>
+
+      <section anchor="sec-threats">
+        <name>Threat Model</name>
+        <t>
+          The attacker wants a domain it controls to verify as affiliated with a
+          parent it does not control, to prevent a legitimate affiliation from
+          verifying, to use an affiliation to delay action against abuse, or to learn
+          a parent's affiliated domains.  The attacker can register domains, publish
+          records in zones it controls, place content on web hosting it has access
+          to, observe public DNS data, and in some cases forge or replay DNS responses
+          on the path to a verifier.  Compromise of the parent's DNS zone or web
+          origin is discussed in <xref target="sec-compromise"/>.
+        </t>
+      </section>
+
+      <section anchor="sec-forged">
+        <name>Fabricated Claims</name>
+        <t>
+          Anyone can publish a claim naming any parent.  The claim is confirmed only
+          if a record exists under the parent's "_affiliation" node, or at the
+          parent's HTTPS origin when the parent has selected that channel, that names
+          the claiming domain.  Absent forged responses (<xref target="sec-spoof"/>),
+          only the parent operator can create such a record.
+        </t>
+      </section>
+
+      <section anchor="sec-copy">
+        <name>Copied Claims and Token Disclosure</name>
+        <t>
+          Claims and tokens are public.  An attacker that copies a legitimate claim to
+          its own domain obtains a confirmation naming the legitimate child, and the
+          result is "not-confirmed".  The binding between token and child is in the
+          parent's confirmation, which the attacker cannot alter.
+        </t>
+      </section>
+
+      <section anchor="sec-stale">
+        <name>Stale Confirmations</name>
+        <t>
+          If a parent fails to remove the confirmation of a child domain that has
+          changed hands, the new registrant of the child inherits the affiliation.
+          This is the most likely failure in practice.  The requirement in
+          <xref target="publish-end"/>, inventory-driven automation
+          (<xref target="ops-automation"/>), and monitoring
+          (<xref target="ops-monitor"/>) address it.  Relying parties with access to
+          registration data <xref target="RFC9083"/> <xref target="RFC9224"/> can
+          treat a confirmation with caution when the child's registration changed
+          after the confirmation was first observed.
+        </t>
+        <t>
+          Likewise, if a parent domain expires and is registered by someone else,
+          the new registrant can confirm arbitrary domains.  Relying parties that
+          attribute standing to a parent based on its history can reassess a parent
+          whose registration has changed rather than carrying standing across the
+          change.
+        </t>
+      </section>
+
+      <section anchor="sec-spoof">
+        <name>Forged DNS Responses</name>
+        <t>
+          An attacker able to forge DNS responses to a verifier, for example through
+          cache poisoning <xref target="RFC5452"/> or by hijacking routes to
+          authoritative servers, can produce any result for unsigned zones.  For the
+          DNS channel, the forgery has to cover the parent's records; forging the
+          claim alone cannot produce "confirmed".
+        </t>
+        <t>
+          Forging the marker can switch the channel in either direction.  In
+          particular, an attacker that can forge the marker of an unsigned parent
+          zone and can place a file at a path under the parent's HTTPS origin, for
+          example through shared hosting or an upload feature, can obtain
+          "confirmed" for any domain.  Such a result is not authenticated
+          (<xref target="verify-auth"/>), which is why the Web PKI alone does not
+          make an HTTPS result authenticated.
+        </t>
+        <t>
+          Results authenticated with DNSSEC are not affected by forged responses.
+          Relying parties taking consequential actions on unauthenticated results
+          can perform the queries from several network locations and require the
+          answers to agree, as certification authorities are required to do for
+          domain validation <xref target="CABF-BR"/>.
+        </t>
+      </section>
+
+      <section anchor="sec-replay">
+        <name>Replay of Deleted Records</name>
+        <t>
+          An attacker on the path to a verifier can replay a confirmation that the
+          parent has deleted.  For unsigned zones, any response can be forged
+          anyway.  For signed zones, a replayed RRset validates until its signatures
+          expire, which can be weeks.  Parents that want deletion to take effect
+          promptly against such attackers use short signature validity periods for
+          names below "_affiliation" (<xref target="ops-ttl"/>).  A confirmation with
+          an expiry date cannot be replayed to effect beyond that date.
+        </t>
+      </section>
+
+      <section anchor="sec-wildcard">
+        <name>Wildcards, Aliases, and Delegation</name>
+        <t>
+          If a parent zone contained a wildcard such as "*.bank.example" and no
+          "_affiliation" node existed, queries for confirmation names would be
+          answered from the wildcard <xref target="RFC4592"/>.  If that wildcard
+          were a CNAME into a zone operated by a third party, such as a hosting
+          platform, a tenant of that platform might be able to publish a TXT record
+          there confirming a domain of its choosing.  The marker prevents this: since
+          its owner name exists, a wildcard above it cannot match names below it, and
+          verifiers reject a marker reached through a CNAME or DNAME record.  An empty
+          non-terminal at "_affiliation" also blocks the wildcard but yields
+          "not-confirmed" because there is no marker.
+        </t>
+        <t>
+          Confirmation names may be CNAMEs, and the "_affiliation" name may be
+          delegated or carry a DNAME record.  The operator of the target or delegated zone can then create
+          and remove confirmations.  Parents delegate in this way only to parties they
+          would trust to publish confirmations on their behalf.
+        </t>
+      </section>
+
+      <section anchor="sec-compromise">
+        <name>Compromise of the Parent</name>
+        <t>
+          An attacker controlling the parent's DNS zone can confirm any domain; it can
+          also redirect the parent domain itself, so DAC does not add to the
+          consequences of that compromise.  An attacker controlling only the parent's
+          web origin can confirm domains through the HTTPS channel only if the
+          parent's marker selects that channel or the marker is forged
+          (<xref target="sec-spoof"/>).  Verifiers report the channel used, and
+          relying parties concerned about web compromise can give less weight to
+          confirmations obtained over HTTPS.  A parent can detect confirmations it
+          did not create by comparing them with its inventory, and recovers by
+          deleting them.
+        </t>
+      </section>
+
+      <section anchor="sec-deflect">
+        <name>Use of Affiliations to Deflect Takedowns</name>
+        <t>
+          An attacker that controls a parent domain to which relying parties
+          attribute standing, for example an expired domain re-registered for its
+          history or a compromised DNS account, can confirm look-alike domains used
+          for phishing.  Takedown requests may then be directed to an abuse contact
+          that the attacker controls.  Relying parties should not let a confirmation
+          alone delay action against abuse they have observed, and can reassess
+          parents whose registration has changed (<xref target="sec-stale"/>) or
+          whose set of confirmed domains grows unexpectedly.
+        </t>
+      </section>
+
+      <section anchor="sec-false-signal">
+        <name>Inducing Adverse Results</name>
+        <t>
+          An attacker able to place a TXT record at "_affiliation" under a victim's
+          domain, for example through a dangling or wildcard CNAME in the victim's
+          zone pointing to a platform the attacker uses, controls the victim's claim.
+          It can make the victim appear to claim a parent that does not confirm it,
+          which is one reason why results other than "confirmed" are not by
+          themselves evidence of malice (<xref target="semantics-use"/>).  It can
+          also name a parent the attacker operates and confirm the claim there,
+          making the victim appear affiliated with the attacker and directing abuse
+          reports about the victim to the attacker's contact.  Children therefore
+          <bcp14>MUST NOT</bcp14> publish wildcards covering their "_affiliation"
+          name (<xref target="ops-dns"/>) and <bcp14>SHOULD</bcp14> make their claim
+          name a CNAME only to names they or their parent operator control.
+        </t>
+      </section>
+
+      <section anchor="sec-dos">
+        <name>Resource Consumption</name>
+        <t>
+          Verification is bounded at three TXT queries and one HTTPS request with its
+          address resolution, with no
+          recursion and no references in record content, avoiding the lookup-limit
+          problems experienced with <xref target="RFC7208"/>; following several
+          levels (<xref target="publish-levels"/>) is bounded at nine queries.
+        </t>
+        <t>
+          An attacker can publish claims with random tokens naming a participating
+          parent, so that each verification causes a query for a new name at the
+          parent's authoritative servers, or a request to its HTTPS origin.
+          Aggressive use of DNSSEC-validated caches <xref target="RFC8198"/> can absorb
+          such queries only where denial of existence covers ranges of names; the
+          configurations recommended in <xref target="ops-dns"/> to prevent zone
+          walking, and unsigned zones, give up that protection, so parents using them
+          depend on verifiers limiting their query rates.  Verifiers that accept names to verify from untrusted
+          sources <bcp14>SHOULD</bcp14> rate-limit the queries and requests they send
+          for each parent domain.
+        </t>
+      </section>
+
+      <section anchor="sec-subtree">
+        <name>Subtree Confirmations</name>
+        <t>
+          A subtree confirmation extends the parent's statement to names that the
+          parent does not list individually.  If anyone other than the parent's
+          organization can create names below the child, for example because the
+          child offers subdomains to customers or has a delegation or wildcard record
+          pointing to a third party, those parties' names would appear affiliated
+          with the parent.  A subtree confirmation is also not evidence about the
+          content of any particular name below the child; abuse observed there is
+          handled as in <xref target="sec-deflect"/>.  This is why parents include
+          "s=subtree" only for children
+          whose entire namespace they control (<xref target="scope"/>).  A dangling
+          record below the child, such as a CNAME to a deprovisioned cloud resource,
+          has the same effect if taken over, so parents using subtree confirmations
+          keep the child's zone free of such records.
+        </t>
+      </section>
+
+      <section anchor="sec-reports">
+        <name>Failure Reports</name>
+        <t>
+          An attacker can publish many claims naming a parent so that verifiers send
+          reports to it; the per-pair limit in <xref target="reports-when"/> and
+          parent-side rate limiting bound the effect.  Restricting report
+          destinations to the parent's own names prevents markers from being used to
+          direct reports at third parties.  A forged marker can direct reports from
+          a verifier to a name chosen by the attacker only within the same limits as
+          other forged responses (<xref target="sec-spoof"/>).  Reports are never
+          evidence that a domain is malicious (<xref target="reports-handling"/>).
+        </t>
+      </section>
+
+      <section anchor="sec-expiry">
+        <name>Expiry Dates</name>
+        <t>
+          Expiry dates are evaluated against the verifier's clock.  An expiry date
+          limits how long a forgotten confirmation remains effective but does not
+          replace removing confirmations (<xref target="publish-end"/>).
+        </t>
+      </section>
+
+      <section anchor="sec-homograph">
+        <name>Confusable Names</name>
+        <t>
+          An attacker can create its own parent and children with names resembling a
+          legitimate organization's.  Their affiliations verify, but convey only the
+          standing of the attacker's parent (<xref target="semantics-not"/>).  User
+          interfaces that display affiliations <bcp14>SHOULD</bcp14> display names
+          in a form that makes confusable characters evident <xref target="UTS39"/>.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="privacy">
+      <name>Privacy Considerations</name>
+      <t>
+        A claim publicly discloses that the child declares an affiliation with the
+        parent; this disclosure is the purpose of the claim.  The parent publishes
+        no list of its domains: a query at the parent reveals nothing about which
+        children exist, and confirmations can be located only from the
+        corresponding claims.  A third party can still find affiliated domains by
+        examining domains one by one, for example those listed in Certificate
+        Transparency logs or zone files, so organizations should assume that every
+        domain publishing a claim is discoverable.  Domains that publish no claim,
+        such as names held defensively or not yet launched, are not revealed.
+      </t>
+      <t>
+        This property depends on confirmation names not being enumerable.  Zone
+        transfers and DNSSEC denial of existence using NSEC records can reveal them;
+        NSEC3 hashes of names containing random tokens of 128 bits or more cannot
+        feasibly be reversed.  <xref target="ops-dns"/> gives recommendations.
+      </t>
+      <t>
+        Queries reveal to resolver operators, and to passive DNS collections, which
+        domains a verifier is evaluating.  QNAME minimisation
+        <xref target="RFC9156"/> reduces exposure of full names to servers higher
+        in the DNS tree.
+      </t>
+      <t>
+        Failure reports disclose to the parent which of the verifier's evaluations
+        involved claims naming the parent.  Verifiers that do not wish to disclose
+        this do not send reports, and the reports contain no information about why
+        an evaluation took place.
+      </t>
+      <t>
+        The abuse contact in the marker is published, and parents
+        <bcp14>SHOULD</bcp14> use role addresses.  Publishers <bcp14>SHOULD
+        NOT</bcp14> include personal data in records.
+      </t>
+    </section>
+
+    <section anchor="iana">
+      <name>IANA Considerations</name>
+
+      <section anchor="iana-underscore">
+        <name>Underscored and Globally Scoped DNS Node Name</name>
+        <t>
+          IANA is requested to add the following entry to the "Underscored and
+          Globally Scoped DNS Node Names" registry <xref target="RFC8552"/>:
+        </t>
+        <table anchor="tab-underscore">
+          <name>Underscored Node Name</name>
+          <thead>
+            <tr><th>RR Type</th><th>_NODE NAME</th><th>Reference</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>TXT</td><td>_affiliation</td><td>RFC XXXX</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section anchor="iana-wellknown">
+        <name>Well-Known URI</name>
+        <t>
+          IANA is requested to register the following in the "Well-Known URIs"
+          registry <xref target="RFC8615"/>:
+        </t>
+        <dl newline="false" spacing="compact">
+          <dt>URI Suffix:</dt><dd>affiliation</dd>
+          <dt>Change Controller:</dt><dd>IETF</dd>
+          <dt>Specification Document:</dt><dd>RFC XXXX, <xref target="https"/></dd>
+          <dt>Status:</dt><dd>permanent</dd>
+          <dt>Related Information:</dt><dd>None</dd>
+        </dl>
+      </section>
+
+      <section anchor="iana-group">
+        <name>Domain Affiliation Confirmation Registry Group</name>
+        <t>
+          IANA is requested to create a registry group titled "Domain Affiliation
+          Confirmation (DAC)" containing the three registries below.  Registrations in
+          all three are made under the Specification Required policy
+          <xref target="RFC8126"/>.
+        </t>
+
+        <section anchor="iana-tags">
+          <name>DAC Tags</name>
+          <t>
+            Each entry contains a tag name matching the "tag-name" rule, the record
+            in which it appears (claim, marker, or confirmation; a tag may appear in
+            more than one), a short description, and a reference.  The designated
+            expert checks that the tag is clearly defined and that verifiers that
+            ignore it remain interoperable.  The initial contents are:
+          </t>
+          <table anchor="tab-tags">
+            <name>Initial DAC Tags</name>
+            <thead>
+              <tr><th>Tag</th><th>Record</th><th>Description</th><th>Reference</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>v</td><td>claim, marker, confirmation</td><td>version</td><td>RFC XXXX</td></tr>
+              <tr><td>p</td><td>claim</td><td>parent domain</td><td>RFC XXXX</td></tr>
+              <tr><td>t</td><td>claim</td><td>token</td><td>RFC XXXX</td></tr>
+              <tr><td>c</td><td>marker</td><td>confirmation channel</td><td>RFC XXXX</td></tr>
+              <tr><td>r</td><td>marker</td><td>abuse contact URI</td><td>RFC XXXX</td></tr>
+              <tr><td>m</td><td>marker</td><td>mode</td><td>RFC XXXX</td></tr>
+              <tr><td>d</td><td>confirmation</td><td>child domain</td><td>RFC XXXX</td></tr>
+              <tr><td>s</td><td>confirmation</td><td>scope</td><td>RFC XXXX</td></tr>
+              <tr><td>x</td><td>confirmation</td><td>expiry date</td><td>RFC XXXX</td></tr>
+              <tr><td>f</td><td>marker</td><td>failure report URI</td><td>RFC XXXX</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section anchor="iana-channels">
+          <name>DAC Confirmation Channels</name>
+          <t>
+            Each entry contains a channel name consisting of lowercase letters,
+            digits, and hyphens, a short
+            description, and a reference.  The designated expert checks that the
+            specification states how a confirmation is obtained, which outcomes map to
+            which results, and the security properties of the channel.  The initial
+            contents are:
+          </t>
+          <table anchor="tab-channels">
+            <name>Initial DAC Confirmation Channels</name>
+            <thead>
+              <tr><th>Channel</th><th>Description</th><th>Reference</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>dns</td><td>TXT record under the parent's "_affiliation" name</td><td>RFC XXXX</td></tr>
+              <tr><td>https</td><td>Resource under "/.well-known/affiliation/"</td><td>RFC XXXX</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section anchor="iana-reasons">
+          <name>DAC Report Reasons</name>
+          <t>
+            Each entry contains a reason value consisting of lowercase letters,
+            digits, and hyphens, a short description, and a reference.  The
+            designated expert checks that the reason describes a distinct outcome of
+            the procedure in <xref target="verify-steps"/> or of a channel.  The
+            initial contents are:
+          </t>
+          <table anchor="tab-reasons">
+            <name>Initial DAC Report Reasons</name>
+            <thead>
+              <tr><th>Reason</th><th>Description</th><th>Reference</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>unconfirmed-token</td><td>No confirmation exists for the claim's token</td><td>RFC XXXX</td></tr>
+              <tr><td>different-child</td><td>The confirmation names another domain</td><td>RFC XXXX</td></tr>
+              <tr><td>expired</td><td>The confirmation's expiry date has passed</td><td>RFC XXXX</td></tr>
+              <tr><td>malformed-confirmation</td><td>The confirmation is malformed, not unique, or cannot be obtained</td><td>RFC XXXX</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </section>
+    </section>
+
+    <section anchor="impl" removeInRFC="true">
+      <name>Implementation Status</name>
+      <t>
+        This section records the status of known implementations of the protocol
+        defined by this specification at the time of posting of this Internet-Draft,
+        and is based on a proposal described in <xref target="RFC7942"/>.  The
+        description of implementations in this section is intended to assist the
+        IETF in its decision processes in progressing drafts to RFCs.  Please note
+        that the listing of any individual implementation here does not imply
+        endorsement by the IETF.  Furthermore, no effort has been spent to verify
+        the information presented here that was supplied by IETF contributors.
+        This is not intended as, and must not be construed to be, a catalog of
+        available implementations or their features.  Readers are advised to note
+        that other implementations may exist.
+      </t>
+      <t>
+        According to <xref target="RFC7942"/>, "this will allow reviewers and
+        working groups to assign due consideration to documents that have the
+        benefit of running code, which may serve as evidence of valuable
+        experimentation and feedback that have made the implemented protocols more
+        mature.  It is up to the individual working groups to use this information
+        as they see fit".
+      </t>
+      <dl newline="false" spacing="normal">
+        <dt>Organization:</dt>
+        <dd>The author.</dd>
+        <dt>Implementation:</dt>
+        <dd>
+          "dac", a library and command-line tool in Go:
+          <eref target="https://github.com/tastypepperoni/dac"/>.
+        </dd>
+        <dt>Description:</dt>
+        <dd>
+          A verifier implementing <xref target="verify"/> and
+          <xref target="https"/> with its own DNS client, failure reporting
+          (<xref target="reports"/>), a publisher that maintains an inventory of
+          affiliations and generates claims, markers and confirmations, a server
+          for the HTTPS channel, checks of published records, and a test DNS
+          server.  All test vectors of <xref target="vectors"/> are automated
+          tests, and every record example in this document is checked against the
+          ABNF in <xref target="syntax"/>.
+        </dd>
+        <dt>Level of maturity:</dt>
+        <dd>Prototype; not yet deployed.</dd>
+        <dt>Coverage:</dt>
+        <dd>All of the protocol.</dd>
+        <dt>Licensing:</dt>
+        <dd>BSD 3-Clause.</dd>
+        <dt>Contact:</dt>
+        <dd>The author.</dd>
+      </dl>
+    </section>
+  </middle>
+
+  <back>
+    <references>
+      <name>References</name>
+      <references>
+        <name>Normative References</name>
+
+        <reference anchor="RFC1034" target="https://www.rfc-editor.org/info/rfc1034">
+          <front>
+            <title>Domain names - concepts and facilities</title>
+            <author initials="P." surname="Mockapetris" fullname="P. Mockapetris"/>
+            <date year="1987" month="November"/>
+          </front>
+          <seriesInfo name="STD" value="13"/>
+          <seriesInfo name="RFC" value="1034"/>
+          <seriesInfo name="DOI" value="10.17487/RFC1034"/>
+        </reference>
+
+        <reference anchor="RFC1035" target="https://www.rfc-editor.org/info/rfc1035">
+          <front>
+            <title>Domain names - implementation and specification</title>
+            <author initials="P." surname="Mockapetris" fullname="P. Mockapetris"/>
+            <date year="1987" month="November"/>
+          </front>
+          <seriesInfo name="STD" value="13"/>
+          <seriesInfo name="RFC" value="1035"/>
+          <seriesInfo name="DOI" value="10.17487/RFC1035"/>
+        </reference>
+
+        <reference anchor="RFC2119" target="https://www.rfc-editor.org/info/rfc2119">
+          <front>
+            <title>Key words for use in RFCs to Indicate Requirement Levels</title>
+            <author initials="S." surname="Bradner" fullname="S. Bradner"/>
+            <date year="1997" month="March"/>
+          </front>
+          <seriesInfo name="BCP" value="14"/>
+          <seriesInfo name="RFC" value="2119"/>
+          <seriesInfo name="DOI" value="10.17487/RFC2119"/>
+        </reference>
+
+        <reference anchor="RFC2181" target="https://www.rfc-editor.org/info/rfc2181">
+          <front>
+            <title>Clarifications to the DNS Specification</title>
+            <author initials="R." surname="Elz" fullname="R. Elz"/>
+            <author initials="R." surname="Bush" fullname="R. Bush"/>
+            <date year="1997" month="July"/>
+          </front>
+          <seriesInfo name="RFC" value="2181"/>
+          <seriesInfo name="DOI" value="10.17487/RFC2181"/>
+        </reference>
+
+        <reference anchor="RFC2308" target="https://www.rfc-editor.org/info/rfc2308">
+          <front>
+            <title>Negative Caching of DNS Queries (DNS NCACHE)</title>
+            <author initials="M." surname="Andrews" fullname="M. Andrews"/>
+            <date year="1998" month="March"/>
+          </front>
+          <seriesInfo name="RFC" value="2308"/>
+          <seriesInfo name="DOI" value="10.17487/RFC2308"/>
+        </reference>
+
+        <reference anchor="RFC3339" target="https://www.rfc-editor.org/info/rfc3339">
+          <front>
+            <title>Date and Time on the Internet: Timestamps</title>
+            <author initials="G." surname="Klyne" fullname="G. Klyne"/>
+            <author initials="C." surname="Newman" fullname="C. Newman"/>
+            <date year="2002" month="July"/>
+          </front>
+          <seriesInfo name="RFC" value="3339"/>
+          <seriesInfo name="DOI" value="10.17487/RFC3339"/>
+        </reference>
+
+        <reference anchor="RFC8259" target="https://www.rfc-editor.org/info/rfc8259">
+          <front>
+            <title>The JavaScript Object Notation (JSON) Data Interchange Format</title>
+            <author initials="T." surname="Bray" fullname="T. Bray" role="editor"/>
+            <date year="2017" month="December"/>
+          </front>
+          <seriesInfo name="STD" value="90"/>
+          <seriesInfo name="RFC" value="8259"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8259"/>
+        </reference>
+
+        <reference anchor="RFC3986" target="https://www.rfc-editor.org/info/rfc3986">
+          <front>
+            <title>Uniform Resource Identifier (URI): Generic Syntax</title>
+            <author initials="T." surname="Berners-Lee" fullname="T. Berners-Lee"/>
+            <author initials="R." surname="Fielding" fullname="R. Fielding"/>
+            <author initials="L." surname="Masinter" fullname="L. Masinter"/>
+            <date year="2005" month="January"/>
+          </front>
+          <seriesInfo name="STD" value="66"/>
+          <seriesInfo name="RFC" value="3986"/>
+          <seriesInfo name="DOI" value="10.17487/RFC3986"/>
+        </reference>
+
+        <reference anchor="RFC4035" target="https://www.rfc-editor.org/info/rfc4035">
+          <front>
+            <title>Protocol Modifications for the DNS Security Extensions</title>
+            <author initials="R." surname="Arends" fullname="R. Arends"/>
+            <author initials="R." surname="Austein" fullname="R. Austein"/>
+            <author initials="M." surname="Larson" fullname="M. Larson"/>
+            <author initials="D." surname="Massey" fullname="D. Massey"/>
+            <author initials="S." surname="Rose" fullname="S. Rose"/>
+            <date year="2005" month="March"/>
+          </front>
+          <seriesInfo name="RFC" value="4035"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4035"/>
+        </reference>
+
+        <reference anchor="RFC4086" target="https://www.rfc-editor.org/info/rfc4086">
+          <front>
+            <title>Randomness Requirements for Security</title>
+            <author initials="D." surname="Eastlake 3rd" fullname="D. Eastlake 3rd"/>
+            <author initials="J." surname="Schiller" fullname="J. Schiller"/>
+            <author initials="S." surname="Crocker" fullname="S. Crocker"/>
+            <date year="2005" month="June"/>
+          </front>
+          <seriesInfo name="BCP" value="106"/>
+          <seriesInfo name="RFC" value="4086"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4086"/>
+        </reference>
+
+        <reference anchor="RFC4592" target="https://www.rfc-editor.org/info/rfc4592">
+          <front>
+            <title>The Role of Wildcards in the Domain Name System</title>
+            <author initials="E." surname="Lewis" fullname="E. Lewis"/>
+            <date year="2006" month="July"/>
+          </front>
+          <seriesInfo name="RFC" value="4592"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4592"/>
+        </reference>
+
+        <reference anchor="RFC4648" target="https://www.rfc-editor.org/info/rfc4648">
+          <front>
+            <title>The Base16, Base32, and Base64 Data Encodings</title>
+            <author initials="S." surname="Josefsson" fullname="S. Josefsson"/>
+            <date year="2006" month="October"/>
+          </front>
+          <seriesInfo name="RFC" value="4648"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4648"/>
+        </reference>
+
+        <reference anchor="RFC5234" target="https://www.rfc-editor.org/info/rfc5234">
+          <front>
+            <title>Augmented BNF for Syntax Specifications: ABNF</title>
+            <author initials="D." surname="Crocker" fullname="D. Crocker" role="editor"/>
+            <author initials="P." surname="Overell" fullname="P. Overell"/>
+            <date year="2008" month="January"/>
+          </front>
+          <seriesInfo name="STD" value="68"/>
+          <seriesInfo name="RFC" value="5234"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5234"/>
+        </reference>
+
+        <reference anchor="RFC5890" target="https://www.rfc-editor.org/info/rfc5890">
+          <front>
+            <title>Internationalized Domain Names for Applications (IDNA): Definitions and Document Framework</title>
+            <author initials="J." surname="Klensin" fullname="J. Klensin"/>
+            <date year="2010" month="August"/>
+          </front>
+          <seriesInfo name="RFC" value="5890"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5890"/>
+        </reference>
+
+        <reference anchor="RFC5891" target="https://www.rfc-editor.org/info/rfc5891">
+          <front>
+            <title>Internationalized Domain Names in Applications (IDNA): Protocol</title>
+            <author initials="J." surname="Klensin" fullname="J. Klensin"/>
+            <date year="2010" month="August"/>
+          </front>
+          <seriesInfo name="RFC" value="5891"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5891"/>
+        </reference>
+
+        <reference anchor="RFC6068" target="https://www.rfc-editor.org/info/rfc6068">
+          <front>
+            <title>The 'mailto' URI Scheme</title>
+            <author initials="M." surname="Duerst" fullname="M. Duerst"/>
+            <author initials="L." surname="Masinter" fullname="L. Masinter"/>
+            <author initials="J." surname="Zawinski" fullname="J. Zawinski"/>
+            <date year="2010" month="October"/>
+          </front>
+          <seriesInfo name="RFC" value="6068"/>
+          <seriesInfo name="DOI" value="10.17487/RFC6068"/>
+        </reference>
+
+        <reference anchor="RFC6672" target="https://www.rfc-editor.org/info/rfc6672">
+          <front>
+            <title>DNAME Redirection in the DNS</title>
+            <author initials="S." surname="Rose" fullname="S. Rose"/>
+            <author initials="W." surname="Wijngaards" fullname="W. Wijngaards"/>
+            <date year="2012" month="June"/>
+          </front>
+          <seriesInfo name="RFC" value="6672"/>
+          <seriesInfo name="DOI" value="10.17487/RFC6672"/>
+        </reference>
+
+        <reference anchor="RFC6890" target="https://www.rfc-editor.org/info/rfc6890">
+          <front>
+            <title>Special-Purpose IP Address Registries</title>
+            <author initials="M." surname="Cotton" fullname="M. Cotton"/>
+            <author initials="L." surname="Vegoda" fullname="L. Vegoda"/>
+            <author initials="R." surname="Bonica" fullname="R. Bonica" role="editor"/>
+            <author initials="B." surname="Haberman" fullname="B. Haberman"/>
+            <date year="2013" month="April"/>
+          </front>
+          <seriesInfo name="BCP" value="153"/>
+          <seriesInfo name="RFC" value="6890"/>
+          <seriesInfo name="DOI" value="10.17487/RFC6890"/>
+        </reference>
+
+        <reference anchor="RFC7208" target="https://www.rfc-editor.org/info/rfc7208">
+          <front>
+            <title>Sender Policy Framework (SPF) for Authorizing Use of Domains in Email, Version 1</title>
+            <author initials="S." surname="Kitterman" fullname="S. Kitterman"/>
+            <date year="2014" month="April"/>
+          </front>
+          <seriesInfo name="RFC" value="7208"/>
+          <seriesInfo name="DOI" value="10.17487/RFC7208"/>
+        </reference>
+
+        <reference anchor="RFC7405" target="https://www.rfc-editor.org/info/rfc7405">
+          <front>
+            <title>Case-Sensitive String Support in ABNF</title>
+            <author initials="P." surname="Kyzivat" fullname="P. Kyzivat"/>
+            <date year="2014" month="December"/>
+          </front>
+          <seriesInfo name="RFC" value="7405"/>
+          <seriesInfo name="DOI" value="10.17487/RFC7405"/>
+        </reference>
+
+        <reference anchor="RFC8126" target="https://www.rfc-editor.org/info/rfc8126">
+          <front>
+            <title>Guidelines for Writing an IANA Considerations Section in RFCs</title>
+            <author initials="M." surname="Cotton" fullname="M. Cotton"/>
+            <author initials="B." surname="Leiba" fullname="B. Leiba"/>
+            <author initials="T." surname="Narten" fullname="T. Narten"/>
+            <date year="2017" month="June"/>
+          </front>
+          <seriesInfo name="BCP" value="26"/>
+          <seriesInfo name="RFC" value="8126"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8126"/>
+        </reference>
+
+        <reference anchor="RFC8174" target="https://www.rfc-editor.org/info/rfc8174">
+          <front>
+            <title>Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words</title>
+            <author initials="B." surname="Leiba" fullname="B. Leiba"/>
+            <date year="2017" month="May"/>
+          </front>
+          <seriesInfo name="BCP" value="14"/>
+          <seriesInfo name="RFC" value="8174"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8174"/>
+        </reference>
+
+        <reference anchor="RFC8552" target="https://www.rfc-editor.org/info/rfc8552">
+          <front>
+            <title>Scoped Interpretation of DNS Resource Records through "Underscored" Naming of Attribute Leaves</title>
+            <author initials="D." surname="Crocker" fullname="D. Crocker"/>
+            <date year="2019" month="March"/>
+          </front>
+          <seriesInfo name="BCP" value="222"/>
+          <seriesInfo name="RFC" value="8552"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8552"/>
+        </reference>
+
+        <reference anchor="RFC8615" target="https://www.rfc-editor.org/info/rfc8615">
+          <front>
+            <title>Well-Known Uniform Resource Identifiers (URIs)</title>
+            <author initials="M." surname="Nottingham" fullname="M. Nottingham"/>
+            <date year="2019" month="May"/>
+          </front>
+          <seriesInfo name="RFC" value="8615"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8615"/>
+        </reference>
+
+        <reference anchor="RFC9110" target="https://www.rfc-editor.org/info/rfc9110">
+          <front>
+            <title>HTTP Semantics</title>
+            <author initials="R." surname="Fielding" fullname="R. Fielding" role="editor"/>
+            <author initials="M." surname="Nottingham" fullname="M. Nottingham" role="editor"/>
+            <author initials="J." surname="Reschke" fullname="J. Reschke" role="editor"/>
+            <date year="2022" month="June"/>
+          </front>
+          <seriesInfo name="STD" value="97"/>
+          <seriesInfo name="RFC" value="9110"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9110"/>
+        </reference>
+
+        <reference anchor="RFC9499" target="https://www.rfc-editor.org/info/rfc9499">
+          <front>
+            <title>DNS Terminology</title>
+            <author initials="P." surname="Hoffman" fullname="P. Hoffman"/>
+            <author initials="K." surname="Fujiwara" fullname="K. Fujiwara"/>
+            <date year="2024" month="March"/>
+          </front>
+          <seriesInfo name="BCP" value="219"/>
+          <seriesInfo name="RFC" value="9499"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9499"/>
+        </reference>
+
+        <reference anchor="RFC9525" target="https://www.rfc-editor.org/info/rfc9525">
+          <front>
+            <title>Service Identity in TLS</title>
+            <author initials="P." surname="Saint-Andre" fullname="P. Saint-Andre"/>
+            <author initials="R." surname="Salz" fullname="R. Salz"/>
+            <date year="2023" month="November"/>
+          </front>
+          <seriesInfo name="RFC" value="9525"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9525"/>
+        </reference>
+      </references>
+
+      <references>
+        <name>Informative References</name>
+
+        <reference anchor="RFC2606" target="https://www.rfc-editor.org/info/rfc2606">
+          <front>
+            <title>Reserved Top Level DNS Names</title>
+            <author initials="D." surname="Eastlake 3rd" fullname="D. Eastlake 3rd"/>
+            <author initials="A." surname="Panitz" fullname="A. Panitz"/>
+            <date year="1999" month="June"/>
+          </front>
+          <seriesInfo name="BCP" value="32"/>
+          <seriesInfo name="RFC" value="2606"/>
+          <seriesInfo name="DOI" value="10.17487/RFC2606"/>
+        </reference>
+
+        <reference anchor="RFC3597" target="https://www.rfc-editor.org/info/rfc3597">
+          <front>
+            <title>Handling of Unknown DNS Resource Record (RR) Types</title>
+            <author initials="A." surname="Gustafsson" fullname="A. Gustafsson"/>
+            <date year="2003" month="September"/>
+          </front>
+          <seriesInfo name="RFC" value="3597"/>
+          <seriesInfo name="DOI" value="10.17487/RFC3597"/>
+        </reference>
+
+        <reference anchor="RFC4343" target="https://www.rfc-editor.org/info/rfc4343">
+          <front>
+            <title>Domain Name System (DNS) Case Insensitivity Clarification</title>
+            <author initials="D." surname="Eastlake 3rd" fullname="D. Eastlake 3rd"/>
+            <date year="2006" month="January"/>
+          </front>
+          <seriesInfo name="RFC" value="4343"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4343"/>
+        </reference>
+
+        <reference anchor="RFC4470" target="https://www.rfc-editor.org/info/rfc4470">
+          <front>
+            <title>Minimally Covering NSEC Records and DNSSEC On-line Signing</title>
+            <author initials="S." surname="Weiler" fullname="S. Weiler"/>
+            <author initials="J." surname="Ihren" fullname="J. Ihren"/>
+            <date year="2006" month="April"/>
+          </front>
+          <seriesInfo name="RFC" value="4470"/>
+          <seriesInfo name="DOI" value="10.17487/RFC4470"/>
+        </reference>
+
+        <reference anchor="RFC5155" target="https://www.rfc-editor.org/info/rfc5155">
+          <front>
+            <title>DNS Security (DNSSEC) Hashed Authenticated Denial of Existence</title>
+            <author initials="B." surname="Laurie" fullname="B. Laurie"/>
+            <author initials="G." surname="Sisson" fullname="G. Sisson"/>
+            <author initials="R." surname="Arends" fullname="R. Arends"/>
+            <author initials="D." surname="Blacka" fullname="D. Blacka"/>
+            <date year="2008" month="March"/>
+          </front>
+          <seriesInfo name="RFC" value="5155"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5155"/>
+        </reference>
+
+        <reference anchor="RFC5452" target="https://www.rfc-editor.org/info/rfc5452">
+          <front>
+            <title>Measures for Making DNS More Resilient against Forged Answers</title>
+            <author initials="A." surname="Hubert" fullname="A. Hubert"/>
+            <author initials="R." surname="van Mook" fullname="R. van Mook"/>
+            <date year="2009" month="January"/>
+          </front>
+          <seriesInfo name="RFC" value="5452"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5452"/>
+        </reference>
+
+        <reference anchor="RFC5507" target="https://www.rfc-editor.org/info/rfc5507">
+          <front>
+            <title>Design Choices When Expanding the DNS</title>
+            <author>
+              <organization>IAB</organization>
+            </author>
+            <author initials="P." surname="Faltstrom" fullname="P. Faltstrom" role="editor"/>
+            <author initials="R." surname="Austein" fullname="R. Austein" role="editor"/>
+            <author initials="P." surname="Koch" fullname="P. Koch" role="editor"/>
+            <date year="2009" month="April"/>
+          </front>
+          <seriesInfo name="RFC" value="5507"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5507"/>
+        </reference>
+
+        <reference anchor="RFC5936" target="https://www.rfc-editor.org/info/rfc5936">
+          <front>
+            <title>DNS Zone Transfer Protocol (AXFR)</title>
+            <author initials="E." surname="Lewis" fullname="E. Lewis"/>
+            <author initials="A." surname="Hoenes" fullname="A. Hoenes" role="editor"/>
+            <date year="2010" month="June"/>
+          </front>
+          <seriesInfo name="RFC" value="5936"/>
+          <seriesInfo name="DOI" value="10.17487/RFC5936"/>
+        </reference>
+
+        <reference anchor="RFC6686" target="https://www.rfc-editor.org/info/rfc6686">
+          <front>
+            <title>Resolution of the Sender Policy Framework (SPF) and Sender ID Experiments</title>
+            <author initials="M." surname="Kucherawy" fullname="M. Kucherawy"/>
+            <date year="2012" month="July"/>
+          </front>
+          <seriesInfo name="RFC" value="6686"/>
+          <seriesInfo name="DOI" value="10.17487/RFC6686"/>
+        </reference>
+
+        <reference anchor="RFC7942" target="https://www.rfc-editor.org/info/rfc7942">
+          <front>
+            <title>Improving Awareness of Running Code: The Implementation Status Section</title>
+            <author initials="Y." surname="Sheffer" fullname="Y. Sheffer"/>
+            <author initials="A." surname="Farrel" fullname="A. Farrel"/>
+            <date year="2016" month="July"/>
+          </front>
+          <seriesInfo name="BCP" value="205"/>
+          <seriesInfo name="RFC" value="7942"/>
+          <seriesInfo name="DOI" value="10.17487/RFC7942"/>
+        </reference>
+
+        <reference anchor="RFC8198" target="https://www.rfc-editor.org/info/rfc8198">
+          <front>
+            <title>Aggressive Use of DNSSEC-Validated Cache</title>
+            <author initials="K." surname="Fujiwara" fullname="K. Fujiwara"/>
+            <author initials="A." surname="Kato" fullname="A. Kato"/>
+            <author initials="W." surname="Kumari" fullname="W. Kumari"/>
+            <date year="2017" month="July"/>
+          </front>
+          <seriesInfo name="RFC" value="8198"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8198"/>
+        </reference>
+
+        <reference anchor="RFC8767" target="https://www.rfc-editor.org/info/rfc8767">
+          <front>
+            <title>Serving Stale Data to Improve DNS Resiliency</title>
+            <author initials="D." surname="Lawrence" fullname="D. Lawrence"/>
+            <author initials="W." surname="Kumari" fullname="W. Kumari"/>
+            <author initials="P." surname="Sood" fullname="P. Sood"/>
+            <date year="2020" month="March"/>
+          </front>
+          <seriesInfo name="RFC" value="8767"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8767"/>
+        </reference>
+
+        <reference anchor="RFC9083" target="https://www.rfc-editor.org/info/rfc9083">
+          <front>
+            <title>JSON Responses for the Registration Data Access Protocol (RDAP)</title>
+            <author initials="S." surname="Hollenbeck" fullname="S. Hollenbeck"/>
+            <author initials="A." surname="Newton" fullname="A. Newton"/>
+            <date year="2021" month="June"/>
+          </front>
+          <seriesInfo name="STD" value="95"/>
+          <seriesInfo name="RFC" value="9083"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9083"/>
+        </reference>
+
+        <reference anchor="RFC9103" target="https://www.rfc-editor.org/info/rfc9103">
+          <front>
+            <title>DNS Zone Transfer over TLS</title>
+            <author initials="W." surname="Toorop" fullname="W. Toorop"/>
+            <author initials="S." surname="Dickinson" fullname="S. Dickinson"/>
+            <author initials="S." surname="Sahib" fullname="S. Sahib"/>
+            <author initials="P." surname="Aras" fullname="P. Aras"/>
+            <author initials="A." surname="Mankin" fullname="A. Mankin"/>
+            <date year="2021" month="August"/>
+          </front>
+          <seriesInfo name="RFC" value="9103"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9103"/>
+        </reference>
+
+        <reference anchor="RFC9156" target="https://www.rfc-editor.org/info/rfc9156">
+          <front>
+            <title>DNS Query Name Minimisation to Improve Privacy</title>
+            <author initials="S." surname="Bortzmeyer" fullname="S. Bortzmeyer"/>
+            <author initials="R." surname="Dolmans" fullname="R. Dolmans"/>
+            <author initials="P." surname="Hoffman" fullname="P. Hoffman"/>
+            <date year="2021" month="November"/>
+          </front>
+          <seriesInfo name="RFC" value="9156"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9156"/>
+        </reference>
+
+        <reference anchor="RFC9224" target="https://www.rfc-editor.org/info/rfc9224">
+          <front>
+            <title>Finding the Authoritative Registration Data Access Protocol (RDAP) Service</title>
+            <author initials="M." surname="Blanchet" fullname="M. Blanchet"/>
+            <date year="2022" month="March"/>
+          </front>
+          <seriesInfo name="STD" value="95"/>
+          <seriesInfo name="RFC" value="9224"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9224"/>
+        </reference>
+
+        <reference anchor="RFC9276" target="https://www.rfc-editor.org/info/rfc9276">
+          <front>
+            <title>Guidance for NSEC3 Parameter Settings</title>
+            <author initials="W." surname="Hardaker" fullname="W. Hardaker"/>
+            <author initials="V." surname="Dukhovni" fullname="V. Dukhovni"/>
+            <date year="2022" month="August"/>
+          </front>
+          <seriesInfo name="BCP" value="236"/>
+          <seriesInfo name="RFC" value="9276"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9276"/>
+        </reference>
+
+        <reference anchor="RFC9824" target="https://www.rfc-editor.org/info/rfc9824">
+          <front>
+            <title>Compact Denial of Existence in DNSSEC</title>
+            <author initials="S." surname="Huque" fullname="S. Huque"/>
+            <author initials="C." surname="Elmerot" fullname="C. Elmerot"/>
+            <author initials="O." surname="Gudmundsson" fullname="O. Gudmundsson"/>
+            <date year="2025" month="September"/>
+          </front>
+          <seriesInfo name="RFC" value="9824"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9824"/>
+        </reference>
+
+        <reference anchor="RFC9989" target="https://www.rfc-editor.org/info/rfc9989">
+          <front>
+            <title>Domain-Based Message Authentication, Reporting, and Conformance (DMARC)</title>
+            <author initials="T." surname="Herr" fullname="T. Herr" role="editor"/>
+            <author initials="J." surname="Levine" fullname="J. Levine" role="editor"/>
+            <date year="2026" month="May"/>
+          </front>
+          <seriesInfo name="RFC" value="9989"/>
+          <seriesInfo name="DOI" value="10.17487/RFC9989"/>
+        </reference>
+
+        <reference anchor="UTS46" target="https://www.unicode.org/reports/tr46/">
+          <front>
+            <title>Unicode IDNA Compatibility Processing</title>
+            <author initials="M." surname="Davis" fullname="Mark Davis"/>
+            <author initials="M." surname="Suignard" fullname="Michel Suignard"/>
+            <date/>
+          </front>
+          <seriesInfo name="Unicode Technical Standard" value="#46"/>
+        </reference>
+
+        <reference anchor="UTS39" target="https://www.unicode.org/reports/tr39/">
+          <front>
+            <title>Unicode Security Mechanisms</title>
+            <author initials="M." surname="Davis" fullname="Mark Davis"/>
+            <author initials="M." surname="Suignard" fullname="Michel Suignard"/>
+            <date/>
+          </front>
+          <seriesInfo name="Unicode Technical Standard" value="#39"/>
+        </reference>
+
+        <reference anchor="I-D.ietf-dnsop-domain-verification-techniques"
+                   target="https://datatracker.ietf.org/doc/html/draft-ietf-dnsop-domain-verification-techniques-13">
+          <front>
+            <title>Domain Control Validation using DNS</title>
+            <author initials="S." surname="Sahib" fullname="Shivan Sahib"/>
+            <author initials="S." surname="Huque" fullname="Shumon Huque"/>
+            <author initials="P." surname="Wouters" fullname="Paul Wouters"/>
+            <author initials="E." surname="Nygren" fullname="Erik Nygren"/>
+            <date year="2026" month="June" day="22"/>
+          </front>
+          <seriesInfo name="Internet-Draft" value="draft-ietf-dnsop-domain-verification-techniques-13"/>
+        </reference>
+
+
+        <reference anchor="I-D.ietf-regext-epp-same-entity"
+                   target="https://datatracker.ietf.org/doc/html/draft-ietf-regext-epp-same-entity-01">
+          <front>
+            <title>Same Entity Set Support for the Extensible Provisioning Protocol (EPP)</title>
+            <author initials="J." surname="Galvin" fullname="James Galvin"/>
+            <date year="2026" month="July" day="13"/>
+          </front>
+          <seriesInfo name="Internet-Draft" value="draft-ietf-regext-epp-same-entity-01"/>
+        </reference>
+
+
+        <reference anchor="CABF-BR" target="https://cabforum.org/working-groups/server/baseline-requirements/requirements/">
+          <front>
+            <title>Baseline Requirements for the Issuance and Management of Publicly-Trusted TLS Server Certificates</title>
+            <author>
+              <organization>CA/Browser Forum</organization>
+            </author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="PSL" target="https://publicsuffix.org/">
+          <front>
+            <title>Public Suffix List</title>
+            <author>
+              <organization>Mozilla Foundation</organization>
+            </author>
+            <date/>
+          </front>
+        </reference>
+
+
+        <reference anchor="ITCHIO" target="https://videogameschronicle.com/news/funko-and-brandshield-say-it-wasnt-their-fault-itch-io-was-taken-offline-site-creator-says-otherwise">
+          <front>
+            <title>Funko and BrandShield say it wasn't their fault itch.io was taken offline, site creator says otherwise</title>
+            <author>
+              <organization>Video Games Chronicle</organization>
+            </author>
+            <date year="2024" month="December"/>
+          </front>
+        </reference>
+      </references>
+    </references>
+
+    <section anchor="rationale">
+      <name>Design Rationale</name>
+
+      <section anchor="rationale-txt">
+        <name>Why TXT Records</name>
+        <t>
+          <xref target="RFC5507"/> discourages overloading TXT records, mainly
+          because unrelated uses collide at the same owner name.  DAC uses a
+          dedicated underscored name <xref target="RFC8552"/> and a version tag,
+          which avoid that collision.  A dedicated resource record type would remove
+          the need for version-tag parsing, and authoritative servers handle unknown
+          types <xref target="RFC3597"/>.  TXT was chosen because DNS provisioning
+          interfaces used by domain operators support it universally, and because
+          experience with the dedicated SPF type <xref target="RFC6686"/>, which
+          <xref target="RFC7208"/> removed, showed the deployment cost of requiring
+          one.  The data model is simple enough that a dedicated type could be added
+          later without changing it.
+        </t>
+      </section>
+
+      <section anchor="rationale-list">
+        <name>Why Not a List of Domains</name>
+        <t>
+          If the parent published a list of its domains, a single query at the
+          parent would disclose the organization's entire portfolio at once,
+          including domains not otherwise easy to find, which is a ready-made target
+          list for attackers and can reveal products before launch.  Every new
+          domain would require editing a shared record, and the list would be bounded
+          by record size or moved to a separate document fetched over HTTPS, adding a
+          dependency.  Hashing list entries does not help, because domain names are
+          guessable.  Per-child confirmations reveal nothing at the parent and are
+          each located only from a claim.
+        </t>
+      </section>
+
+      <section anchor="rationale-signatures">
+        <name>Why Not Signatures</name>
+        <t>
+          A parent could publish a public key and sign each child's name, with the
+          signature published by the child, so that the parent's zone would not
+          change per child.  Signatures remain valid after a child changes hands,
+          however, so they need expiry dates, periodic re-signing of every child,
+          revocation lists for urgent cases, and procedures for key rotation and
+          compromise.  DAC instead relies on the parent's existing control of its DNS
+          zone or web origin, at the cost of one record per child at the parent.
+        </t>
+      </section>
+
+      <section anchor="rationale-psl">
+        <name>Why the Procedure Does Not Use the Public Suffix List</name>
+        <t>
+          Mechanisms that infer relationships between names depend on the Public
+          Suffix List <xref target="PSL"/>, a community-maintained list without a
+          standard update model; <xref target="RFC9989"/> replaced its use in DMARC
+          for this reason.  DAC infers nothing: each confirmation requires a record
+          that only the parent's operator can publish.  A claim naming a public suffix
+          as its parent is confirmed only if that suffix's operator confirms it.
+          Relying parties may still use boundary information to decide which names to
+          evaluate and how to attribute standing.
+        </t>
+      </section>
+
+      <section anchor="rationale-transitive">
+        <name>Why Affiliation Is Not Transitive Across Organizations</name>
+        <t>
+          A mechanism in which organizations vouch for one another, with vouching
+          that propagates, lets an attacker gain standing by compromising or paying
+          any participant, dilutes the meaning of each step, and makes revocation
+          depend on parties who may not know about the chain.  DAC expresses only that
+          one operator operates or authorizes a domain.  The protocol cannot tell
+          whether two levels belong to the same organization, which is why a
+          confirmation says nothing about the confirmed domain's own children
+          (<xref target="publish-levels"/>).
+        </t>
+      </section>
+
+      <section anchor="rationale-mesh">
+        <name>Why One Parent per Child</name>
+        <t>
+          In designs where every member of a group lists, and must be confirmed by,
+          every other member, each new domain requires changes at every member, and a
+          verifier must compute the group as the closure of pairwise links, at a cost
+          that grows with the size of the group and has to be capped by arbitrary
+          limits.  DAC relates each child to exactly one parent, so adding a domain
+          changes two records and verification has a fixed cost.  Organizations with
+          several levels are handled one affiliation at a time
+          (<xref target="publish-levels"/>).
+        </t>
+      </section>
+
+      <section anchor="rationale-auth">
+        <name>Why Authentication Is Reported Rather Than Required</name>
+        <t>
+          Requiring DNSSEC or an HTTPS origin on both sides of every relationship
+          would exclude most domains, including names held defensively that serve no
+          content, and would make the mechanism unusable for most of the
+          organizations it is meant to help.  DAC instead reports whether each result
+          is authenticated (<xref target="verify-auth"/>), so that relying parties
+          can require authentication where their decisions warrant it, and states
+          precisely when an HTTPS confirmation counts as authenticated.
+        </t>
+      </section>
+
+      <section anchor="rationale-infra">
+        <name>Why No Aggregators</name>
+        <t>
+          DAC needs no index, registry of relationships, or submission service.
+          Every verifier obtains results directly from the domains concerned, so
+          there is no additional party to operate, trust, or keep current, and no
+          endpoint that can be used to make a service send traffic to arbitrary
+          domains.  Aggregators can be built on DAC, but nothing depends on them.
+        </t>
+      </section>
+
+      <section anchor="rationale-meaning">
+        <name>Why the Meaning of a Confirmation Is Defined</name>
+        <t>
+          A mechanism that declares a relationship between domains, but whose
+          specification forbids relying parties to draw conclusions from it, gives
+          those parties nothing to act on, and the problems in
+          <xref target="problem"/> remain.  DAC addresses a specific operational
+          problem with intended consumers, takedown services and reputation systems,
+          and states what a confirmation means (<xref target="semantics"/>),
+          including where reports of abuse are to be sent.  It also bounds that
+          meaning: a confirmation conveys no more standing than the parent already
+          has (<xref target="semantics-not"/>).  The author invites operators of such
+          services to comment on whether the stated meaning meets their needs.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="example">
+      <name>Complete Example</name>
+      <t>The operator of bank.example launches embank.example and uses the DNS channel.</t>
+      <sourcecode type="dns-rr"><![CDATA[
+; In the bank.example zone (once):
+_affiliation.bank.example.   3600 IN TXT
+    "v=DAC1; r=mailto:abuse@bank.example"
+
+; In the bank.example zone (per child):
+mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example.
+                             3600 IN TXT "v=DAC1; d=embank.example"
+
+; In the embank.example zone:
+_affiliation.embank.example. 3600 IN TXT
+    "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+]]></sourcecode>
+      <t>A verifier evaluating embank.example:</t>
+      <ol spacing="normal">
+        <li>
+          queries TXT at _affiliation.embank.example and obtains parent
+          "bank.example" and the token;
+        </li>
+        <li>
+          queries TXT at _affiliation.bank.example and obtains the marker: channel
+          "dns", mode "enforce", contact "mailto:abuse@bank.example";
+        </li>
+        <li>
+          queries TXT at mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example
+          and obtains "d=embank.example", which equals the child domain.
+        </li>
+      </ol>
+      <t>
+        The result is "confirmed", reusable for 3600 seconds, and authenticated if
+        all three answers validate as secure.
+      </t>
+      <t>
+        A mail filter assessing "statements.embank.example" verifies
+        "embank.example", the domain it already treats as responsible for that name.
+        Because the confirmation above has no "s" tag, the result states nothing
+        about "statements.embank.example" itself.  If bank.example operates every
+        name under embank.example, it publishes the confirmation as
+        "v=DAC1; d=embank.example; s=subtree", and the result covers
+        "statements.embank.example" too.
+      </t>
+      <t>
+        An attacker registers embank-login.example and publishes a copy of the
+        claim.  Step 3 returns "d=embank.example", which differs from
+        "embank-login.example", so the result is "not-confirmed".  When the operator
+        of bank.example sells embank.example, it deletes the confirmation; from then
+        on, embank.example yields "not-confirmed" whatever its new operator
+        publishes.
+      </t>
+    </section>
+
+    <section anchor="vectors">
+      <name>Test Vectors</name>
+      <t>
+        Each vector describes a change to the data of <xref target="example"/> and
+        the expected result for the child domain "embank.example" (in vector 6, "embank-login.example").
+        T is the example token.  The reference implementation
+        (<xref target="impl"/>) runs these vectors as tests.
+      </t>
+      <table anchor="tab-vectors">
+        <name>Test Vectors</name>
+        <thead>
+          <tr><th>#</th><th>Change from the example</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>None</td><td>confirmed</td></tr>
+          <tr><td>2</td><td>No claim at the child</td><td>none</td></tr>
+          <tr><td>3</td><td>Child has only "v=spf1 -all"</td><td>none</td></tr>
+          <tr><td>4</td><td>Child has "v=DAC10; p=bank.example; t=T"</td><td>none</td></tr>
+          <tr><td>5</td><td>No marker at the parent</td><td>not-confirmed</td></tr>
+          <tr><td>6</td><td>Child is embank-login.example with a copy of the claim</td><td>not-confirmed</td></tr>
+          <tr><td>7</td><td>Claim carries a token the parent never issued</td><td>not-confirmed</td></tr>
+          <tr><td>8</td><td>Confirmation deleted</td><td>not-confirmed</td></tr>
+          <tr><td>9</td><td>Marker name is an empty non-terminal (NOERROR, no data)</td><td>not-confirmed</td></tr>
+          <tr><td>10</td><td>Marker answer contains a CNAME</td><td>permerror</td></tr>
+          <tr><td>11</td><td>Marker answer contains a CNAME and no TXT data</td><td>permerror</td></tr>
+          <tr><td>12</td><td>Claim answer contains a CNAME</td><td>confirmed</td></tr>
+          <tr><td>13</td><td>Confirmation answer contains a CNAME</td><td>confirmed</td></tr>
+          <tr><td>14</td><td>Two DAC records at the claim name</td><td>permerror</td></tr>
+          <tr><td>15</td><td>Two DAC records at the confirmation name</td><td>permerror</td></tr>
+          <tr><td>16</td><td>Confirmation repeats the "d" tag</td><td>permerror</td></tr>
+          <tr><td>17</td><td>Confirmation has no "d" tag</td><td>permerror</td></tr>
+          <tr><td>18</td><td>Token in uppercase</td><td>permerror</td></tr>
+          <tr><td>19</td><td>Token of 8 characters</td><td>permerror</td></tr>
+          <tr><td>20</td><td>Token of 26 characters, confirmed under that token</td><td>confirmed</td></tr>
+          <tr><td>21</td><td>Claim has "p=Bank.Example."</td><td>permerror</td></tr>
+          <tr><td>22</td><td>Claim has an additional tag "z=future"</td><td>confirmed</td></tr>
+          <tr><td>23</td><td>Claim repeats the "p" tag</td><td>permerror</td></tr>
+          <tr><td>24</td><td>Claim names embank.example as its parent</td><td>permerror</td></tr>
+          <tr><td>25</td><td>Parent is the single-label name "bank"</td><td>confirmed</td></tr>
+          <tr><td>26</td><td>Claim has "p=192.0.2.1"</td><td>permerror</td></tr>
+          <tr><td>27</td><td>Marker has "m=test"</td><td>confirmed, mode test</td></tr>
+          <tr><td>28</td><td>Marker has "m=other"</td><td>confirmed, mode test</td></tr>
+          <tr><td>29</td><td>Confirmation has "s=subtree"</td><td>confirmed, covers names below</td></tr>
+          <tr><td>30</td><td>Confirmation has "s=other"</td><td>confirmed, child only</td></tr>
+          <tr><td>31</td><td>Confirmation has "x=2099-12-31"</td><td>confirmed</td></tr>
+          <tr><td>32</td><td>Confirmation has "x=2020-01-01"</td><td>not-confirmed (report reason "expired")</td></tr>
+          <tr><td>33</td><td>Confirmation has "x=2027-02-30"</td><td>permerror</td></tr>
+          <tr><td>34</td><td>Confirmation has an "x" value equal to the current UTC date</td><td>confirmed</td></tr>
+          <tr><td>35</td><td>Confirmation has "s=subtree; x=2099-12-31"</td><td>confirmed, covers names below</td></tr>
+          <tr><td>36</td><td>Marker has "f=mailto:dac-reports@bank.example"; claim carries a token the parent never issued</td><td>not-confirmed; report with reason "unconfirmed-token" to that address</td></tr>
+          <tr><td>37</td><td>Marker has "f=mailto:reports@other.example"; claim carries a token the parent never issued</td><td>not-confirmed; no report</td></tr>
+          <tr><td>38</td><td>Marker has "f=mailto:r@bank.example?cc=x@other.example"</td><td>no reports (tag ignored)</td></tr>
+          <tr><td>39</td><td>Marker has "f=https://user@bank.example/r" or "f=https://bank.example:8443/r"</td><td>no reports (tag ignored)</td></tr>
+          <tr><td>40</td><td>Marker has "f=https://reports.bank.example/dac"; "c=https" and the resource returns 404</td><td>not-confirmed; report reason "unconfirmed-token"</td></tr>
+          <tr><td>41</td><td>Confirmation repeats the "d" tag, marker has a valid "f"</td><td>permerror; report reason "malformed-confirmation"</td></tr>
+          <tr><td>42</td><td>Child record has only marker tags ("v=DAC1; r=mailto:abuse@embank.example")</td><td>none</td></tr>
+          <tr><td>43</td><td>Child record has claim and marker tags; its own children verify against it</td><td>confirmed (both)</td></tr>
+          <tr><td>44</td><td>Claim has "p=bank.example" but no "t"</td><td>permerror</td></tr>
+          <tr><td>45</td><td>Marker has "r=ftp://x.example"</td><td>confirmed, no contact</td></tr>
+          <tr><td>46</td><td>Marker has "c=future" or "c=HTTPS"</td><td>not-confirmed</td></tr>
+          <tr><td>47</td><td>SERVFAIL, timeout, or DNSSEC bogus at any of the three names</td><td>temperror</td></tr>
+          <tr><td>48</td><td>Confirmation name returns NOERROR without data</td><td>not-confirmed</td></tr>
+          <tr><td>49</td><td>"c=https"; 200, "text/plain", "v=DAC1; d=embank.example"</td><td>confirmed</td></tr>
+          <tr><td>50</td><td>"c=https"; 200, "text/plain; charset=utf-8", "v=DAC1; d=embank.example"</td><td>confirmed</td></tr>
+          <tr><td>51</td><td>"c=https"; 200, "text/plain", "Cache-Control: no-store", "v=DAC1; d=embank.example"</td><td>confirmed, not reusable</td></tr>
+          <tr><td>52</td><td>"c=https"; 404</td><td>not-confirmed</td></tr>
+          <tr><td>53</td><td>"c=https"; 301</td><td>permerror</td></tr>
+          <tr><td>54</td><td>"c=https"; 200 with "text/html"</td><td>permerror</td></tr>
+          <tr><td>55</td><td>"c=https"; content longer than 1024 octets</td><td>permerror</td></tr>
+          <tr><td>56</td><td>"c=https"; content is two records</td><td>permerror</td></tr>
+          <tr><td>57</td><td>"c=https"; malformed record</td><td>permerror</td></tr>
+          <tr><td>58</td><td>"c=https"; 503 or connection failure</td><td>temperror</td></tr>
+          <tr><td>59</td><td>"c=https"; parent has no globally reachable address</td><td>permerror</td></tr>
+          <tr><td>60</td><td>"c=https"; no resource, but a DNS confirmation exists</td><td>not-confirmed</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section anchor="ack" numbered="false">
+      <name>Acknowledgments</name>
+      <t>
+        This document builds on the practices collected in
+        <xref target="I-D.ietf-dnsop-domain-verification-techniques"/> and on
+        operational experience with SPF, DMARC, MTA-STS, and ACME.
+      </t>
+    </section>
+  </back>
+</rfc>

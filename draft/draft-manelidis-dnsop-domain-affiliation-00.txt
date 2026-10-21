@@ -1,0 +1,2576 @@
+
+
+
+
+Network Working Group                                       D. Manelidis
+Internet-Draft                                           21 October 2026
+Intended status: Standards Track                                        
+Expires: 24 April 2027
+
+
+                 Domain Affiliation Confirmation (DAC)
+              draft-manelidis-dnsop-domain-affiliation-00
+
+Abstract
+
+   Security systems assess domain names one at a time.  A new domain of
+   an established organization therefore starts with no reputation, and
+   a legitimate domain that resembles another organization's name can be
+   reported as an impersonation.  This document defines Domain
+   Affiliation Confirmation (DAC), by which the operator of a parent
+   domain confirms that a child domain is operated by it or under its
+   authority.  The child publishes a DNS record naming the parent and a
+   random token; the parent confirms that token, in the DNS or over
+   HTTPS, by naming the child.  Verification takes at most three DNS
+   queries.  The parent publishes no list of its domains, and an
+   affiliation is ended by deleting one record.  The document also
+   states what a confirmation means to relying parties such as takedown
+   services and reputation systems.
+
+About This Document
+
+   This note is to be removed before publishing as an RFC.
+
+   Discussion of this document takes place on the Domain Name System
+   Operations (DNSOP) Working Group mailing list (dnsop@ietf.org).  A
+   reference implementation with test vectors accompanies this draft
+   (Section 14).
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 1]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   This Internet-Draft will expire on 24 April 2027.
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
+     1.1.  Problem Statement . . . . . . . . . . . . . . . . . . . .   4
+     1.2.  This Document . . . . . . . . . . . . . . . . . . . . . .   5
+     1.3.  Design Goals  . . . . . . . . . . . . . . . . . . . . . .   5
+     1.4.  Non-Goals . . . . . . . . . . . . . . . . . . . . . . . .   6
+     1.5.  Relationship to Other Work  . . . . . . . . . . . . . . .   6
+     1.6.  Requirements Language . . . . . . . . . . . . . . . . . .   6
+   2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   6
+   3.  Protocol Overview . . . . . . . . . . . . . . . . . . . . . .   7
+   4.  Records . . . . . . . . . . . . . . . . . . . . . . . . . . .   8
+     4.1.  Common Syntax . . . . . . . . . . . . . . . . . . . . . .   8
+     4.2.  Claim Record  . . . . . . . . . . . . . . . . . . . . . .  10
+     4.3.  Scope of an Affiliation . . . . . . . . . . . . . . . . .  10
+     4.4.  Marker Record . . . . . . . . . . . . . . . . . . . . . .  11
+     4.5.  Confirmation Record (DNS Channel) . . . . . . . . . . . .  12
+     4.6.  Tokens  . . . . . . . . . . . . . . . . . . . . . . . . .  12
+   5.  Publishing an Affiliation . . . . . . . . . . . . . . . . . .  13
+     5.1.  Creating an Affiliation . . . . . . . . . . . . . . . . .  13
+     5.2.  Ending an Affiliation . . . . . . . . . . . . . . . . . .  13
+     5.3.  Moving a Child to Another Parent  . . . . . . . . . . . .  14
+     5.4.  Organizations with Several Levels . . . . . . . . . . . .  14
+   6.  Verification  . . . . . . . . . . . . . . . . . . . . . . . .  14
+     6.1.  Inputs and Outputs  . . . . . . . . . . . . . . . . . . .  14
+     6.2.  Procedure . . . . . . . . . . . . . . . . . . . . . . . .  15
+     6.3.  Results . . . . . . . . . . . . . . . . . . . . . . . . .  16
+     6.4.  DNS Errors  . . . . . . . . . . . . . . . . . . . . . . .  16
+     6.5.  Authenticated Results . . . . . . . . . . . . . . . . . .  17
+     6.6.  Caching . . . . . . . . . . . . . . . . . . . . . . . . .  17
+   7.  HTTPS Channel . . . . . . . . . . . . . . . . . . . . . . . .  17
+     7.1.  Resource  . . . . . . . . . . . . . . . . . . . . . . . .  17
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 2]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+     7.2.  Fetching  . . . . . . . . . . . . . . . . . . . . . . . .  18
+   8.  Meaning of a Confirmation . . . . . . . . . . . . . . . . . .  19
+     8.1.  What a Confirmation States  . . . . . . . . . . . . . . .  19
+     8.2.  What a Confirmation Does Not State  . . . . . . . . . . .  19
+     8.3.  Considerations for Relying Parties  . . . . . . . . . . .  20
+   9.  Failure Reports . . . . . . . . . . . . . . . . . . . . . . .  20
+     9.1.  When Reports Are Sent . . . . . . . . . . . . . . . . . .  21
+     9.2.  Report Format . . . . . . . . . . . . . . . . . . . . . .  21
+     9.3.  Delivery  . . . . . . . . . . . . . . . . . . . . . . . .  22
+     9.4.  Handling Reports  . . . . . . . . . . . . . . . . . . . .  22
+   10. Operational Considerations  . . . . . . . . . . . . . . . . .  22
+     10.1.  Automation and Inventory . . . . . . . . . . . . . . . .  22
+     10.2.  TTLs, Signatures, and Revocation Time  . . . . . . . . .  23
+     10.3.  Staged Deployment  . . . . . . . . . . . . . . . . . . .  23
+     10.4.  Choosing and Changing Channels . . . . . . . . . . . . .  23
+     10.5.  Load and Scale . . . . . . . . . . . . . . . . . . . . .  23
+     10.6.  DNS Configuration  . . . . . . . . . . . . . . . . . . .  24
+     10.7.  Monitoring . . . . . . . . . . . . . . . . . . . . . . .  24
+   11. Security Considerations . . . . . . . . . . . . . . . . . . .  24
+     11.1.  Threat Model . . . . . . . . . . . . . . . . . . . . . .  24
+     11.2.  Fabricated Claims  . . . . . . . . . . . . . . . . . . .  24
+     11.3.  Copied Claims and Token Disclosure . . . . . . . . . . .  25
+     11.4.  Stale Confirmations  . . . . . . . . . . . . . . . . . .  25
+     11.5.  Forged DNS Responses . . . . . . . . . . . . . . . . . .  25
+     11.6.  Replay of Deleted Records  . . . . . . . . . . . . . . .  26
+     11.7.  Wildcards, Aliases, and Delegation . . . . . . . . . . .  26
+     11.8.  Compromise of the Parent . . . . . . . . . . . . . . . .  26
+     11.9.  Use of Affiliations to Deflect Takedowns . . . . . . . .  27
+     11.10. Inducing Adverse Results . . . . . . . . . . . . . . . .  27
+     11.11. Resource Consumption . . . . . . . . . . . . . . . . . .  27
+     11.12. Subtree Confirmations  . . . . . . . . . . . . . . . . .  28
+     11.13. Failure Reports  . . . . . . . . . . . . . . . . . . . .  28
+     11.14. Expiry Dates . . . . . . . . . . . . . . . . . . . . . .  28
+     11.15. Confusable Names . . . . . . . . . . . . . . . . . . . .  28
+   12. Privacy Considerations  . . . . . . . . . . . . . . . . . . .  29
+   13. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  29
+     13.1.  Underscored and Globally Scoped DNS Node Name  . . . . .  29
+     13.2.  Well-Known URI . . . . . . . . . . . . . . . . . . . . .  30
+     13.3.  Domain Affiliation Confirmation Registry Group . . . . .  30
+       13.3.1.  DAC Tags . . . . . . . . . . . . . . . . . . . . . .  30
+       13.3.2.  DAC Confirmation Channels  . . . . . . . . . . . . .  31
+       13.3.3.  DAC Report Reasons . . . . . . . . . . . . . . . . .  32
+   14. Implementation Status . . . . . . . . . . . . . . . . . . . .  32
+   15. References  . . . . . . . . . . . . . . . . . . . . . . . . .  33
+     15.1.  Normative References . . . . . . . . . . . . . . . . . .  33
+     15.2.  Informative References . . . . . . . . . . . . . . . . .  36
+   Appendix A.  Design Rationale . . . . . . . . . . . . . . . . . .  39
+     A.1.  Why TXT Records . . . . . . . . . . . . . . . . . . . . .  39
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 3]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+     A.2.  Why Not a List of Domains . . . . . . . . . . . . . . . .  39
+     A.3.  Why Not Signatures  . . . . . . . . . . . . . . . . . . .  39
+     A.4.  Why the Procedure Does Not Use the Public Suffix List . .  39
+     A.5.  Why Affiliation Is Not Transitive Across Organizations  .  40
+     A.6.  Why One Parent per Child  . . . . . . . . . . . . . . . .  40
+     A.7.  Why Authentication Is Reported Rather Than Required . . .  40
+     A.8.  Why No Aggregators  . . . . . . . . . . . . . . . . . . .  40
+     A.9.  Why the Meaning of a Confirmation Is Defined  . . . . . .  41
+   Appendix B.  Complete Example . . . . . . . . . . . . . . . . . .  41
+   Appendix C.  Test Vectors . . . . . . . . . . . . . . . . . . . .  42
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  46
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  46
+
+1.  Introduction
+
+1.1.  Problem Statement
+
+   Mail filters, browser warning systems, secure web gateways, and
+   brand-protection services evaluate domain names individually.  Two
+   consequences follow for organizations that operate more than one
+   domain.
+
+   New domains start without reputation.  When an organization launches
+      a product or service under a new domain name, that name is treated
+      as unknown, and often as suspicious, because nothing tells the
+      evaluating system that it is operated by the same organization as
+      an established domain.
+
+   Legitimate look-alikes are reported as impersonations.
+      Brand-protection services search for newly registered names that
+      resemble their clients' names.  A legitimate domain of one
+      organization can resemble the name of an unrelated organization.
+      The service has no standard way to learn that the domain is
+      operated by an established organization and may ask the domain's
+      registrar or hosting provider to suspend it.  Erroneous takedown
+      requests can disable an entire legitimate domain [ITCHIO].
+
+   Both problems would be reduced if an evaluating system could ask a
+   precise question and get an answer from the party able to give it:
+   "Does the operator of this established domain confirm that it
+   operates this other domain?"  No deployed mechanism answers it.
+   Registration data [RFC9083] is frequently redacted and was not
+   designed to express relationships between domains, and certificates
+   bind keys to names, not names to each other.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 4]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+1.2.  This Document
+
+   This document defines Domain Affiliation Confirmation (DAC).  The
+   domain to be affiliated (the child) publishes a DNS record that names
+   its parent domain and carries a random token.  The parent confirms
+   the affiliation by publishing, under a name derived from that token,
+   a record that names the child.  A verifier reads the child's record,
+   reads the parent's confirmation, and checks that the confirmation
+   names the child it started from.
+
+   The document also states what a confirmation means (Section 8): the
+   parent's operator indicates that it operates the child or authorizes
+   its operation, and that reports of abuse concerning the child may be
+   directed to it.  A relationship that relying parties are not meant to
+   act on would leave the problems above unsolved (Appendix A.9).
+
+1.3.  Design Goals
+
+   1.  Only the parent can create an affiliation.  A claim the parent
+       has not confirmed has no effect, and a confirmation for one child
+       cannot be reused for another.
+
+   2.  The parent publishes nothing from which its affiliated domains
+       can be listed.  Each child's claim is public, so affiliated
+       domains can be found by examining domains individually, as with
+       any public DNS data.
+
+   3.  An affiliation is ended by deleting one record at the parent,
+       without any change at the child.  The change takes effect within
+       cache and DNSSEC signature lifetimes (Section 11.6).
+
+   4.  No new key material.  The protocol relies on the parent's
+       existing control of its DNS zone or, optionally, its web origin.
+
+   5.  Bounded cost.  Verification takes at most three TXT queries, plus
+       one HTTPS request and its address resolution when the parent uses
+       that channel, with no recursion and no searching.
+
+   6.  Deployable with existing tools.  Records are TXT records at
+       underscored names [RFC8552].
+
+   7.  The verification procedure does not consult a list of public
+       suffixes.  Every confirmation requires a record that only the
+       parent's operator can publish.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 5]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+1.4.  Non-Goals
+
+   DAC does not establish the identity, legitimacy, or licensing of the
+   parent's operator.  It conveys a statement by whoever operates the
+   parent domain; whether that party deserves trust is for each relying
+   party to decide (Section 8).
+
+   DAC does not express relationships between independent organizations,
+   such as partnerships or service providers (Appendix A.5).
+
+   DAC does not define where administrative boundaries in the DNS lie.
+   Relying parties may still need such information to decide which names
+   to evaluate.
+
+1.5.  Relationship to Other Work
+
+   [I-D.ietf-dnsop-domain-verification-techniques] describes how a
+   service verifies that a user controls a domain.  DAC follows its
+   practices for TXT records at underscored names and for tokens, but
+   records a standing relationship between two domains rather than
+   proving control of one domain to one service.
+
+   [I-D.ietf-regext-epp-same-entity] lets a registry enforce that a
+   group of names in that registry is held by one registrant.  DAC
+   operates across registries and is published by the domains'
+   operators.
+
+1.6.  Requirements Language
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+2.  Terminology
+
+   DNS terms are used as defined in [RFC9499].  This document also uses
+   the following terms.
+
+   Child domain:  The domain name whose affiliation is declared or
+      verified.
+
+   Parent domain:  The domain name that the child domain names as its
+      parent.
+
+   Parent operator:  The party that controls the content of the parent
+
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 6]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+      domain's DNS zone or, for confirmations over HTTPS, of the parent
+      domain's HTTPS origin.
+
+   Claim:  The TXT record published by the child domain (Section 4.2).
+
+   Marker:  The TXT record by which a parent domain indicates that it
+      participates and selects a confirmation channel (Section 4.4).
+
+   Confirmation:  The record by which the parent domain confirms one
+      claim, published in the DNS (Section 4.5) or over HTTPS
+      (Section 7).
+
+   Token:  A random value, unique to one child domain, that links a
+      claim to its confirmation (Section 4.6).
+
+   Verifier:  A party that carries out the procedure in Section 6.
+
+   Relying party:  A party that makes decisions using verification
+      results, such as a takedown service, a mail filter, or a
+      reputation system.
+
+   In examples, "bank.example" is the parent domain and "embank.example"
+   is the child domain [RFC2606].  The token used in examples,
+   "mfrggzdfmztwq2lknnwg23tpobyxe43u", is illustrative and not random.
+
+3.  Protocol Overview
+
+   An affiliation consists of three records.  The claim is published by
+   the child; the marker and the confirmation are published by the
+   parent.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 7]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+    Child: embank.example              Parent: bank.example
+   +-------------------------------+  +--------------------------------+
+   | _affiliation.embank.example.  |  | _affiliation.bank.example.     |
+   |   TXT "v=DAC1;                |  |   TXT "v=DAC1"        (marker) |
+   |     p=bank.example;           |  |                                |
+   |     t=<token>"        (claim) |  | <token>._affiliation.          |
+   +-------------------------------+  |        bank.example.           |
+                                      |   TXT "v=DAC1;                 |
+                                      |     d=embank.example"          |
+                                      |                 (confirmation) |
+                                      +--------------------------------+
+
+   Verifier:
+    1. TXT _affiliation.embank.example  -> p=bank.example, t=<token>
+    2. TXT _affiliation.bank.example    -> marker, channel "dns"
+    3. TXT <token>._affiliation.bank.example
+                                        -> d=embank.example
+    4. d= equals the child domain       -> result "confirmed"
+
+                  Figure 1: Records and Verification Steps
+
+   A claim copied to another domain fails because the confirmation names
+   the original child.  Confirmation names cannot be found without the
+   corresponding claims, because they contain the token.  The marker
+   prevents a wildcard elsewhere in the parent's zone from answering for
+   confirmation names (Section 11.7) and tells the verifier which
+   channel the parent uses.
+
+4.  Records
+
+4.1.  Common Syntax
+
+   The three records share one tag-list syntax: a version tag followed
+   by zero or more tags, separated by semicolons.  The ABNF [RFC5234]
+   below uses case-sensitive strings [RFC7405]; WSP, ALPHA, and DIGIT
+   are the core rules of [RFC5234].
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 8]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   <CODE BEGINS> file "dac.abnf"
+   record      = *WSP v-tag *( *WSP ";" *WSP tag ) [ *WSP ";" ] *WSP
+   v-tag       = %s"v" *WSP "=" *WSP %s"DAC1"
+   tag         = tag-name *WSP "=" *WSP tag-value
+   tag-name    = ALPHA *( ALPHA / DIGIT / "_" )
+   tag-value   = 1*tval-char
+   tval-char   = %x21-3A / %x3C-7E        ; VCHAR except ";"
+
+   p-value     = domain                   ; claim: parent domain
+   t-value     = 26*52b32-char            ; claim: token
+   c-value     = 1*tval-char              ; marker: channel
+   m-value     = 1*tval-char              ; marker: mode
+   r-value     = 1*tval-char              ; marker: abuse contact URI
+   d-value     = domain                   ; confirmation: child domain
+   s-value     = 1*tval-char              ; confirmation: scope
+   x-value     = 4DIGIT "-" 2DIGIT "-" 2DIGIT ; confirmation: expiry
+   f-value     = 1*tval-char              ; marker: report URI
+
+   domain      = label *( "." label )
+   label       = ld-char [ *61ldh-char ld-char ]
+   ld-char     = %x61-7A / DIGIT          ; lowercase letters and digits
+   ldh-char    = ld-char / "-"
+   b32-char    = %x61-7A / %x32-37        ; RFC 4648 base32, lowercase
+   <CODE ENDS>
+
+   A TXT record is a DAC record if its text, after any leading spaces or
+   tabs, begins with "v", optional whitespace, "=", optional whitespace,
+   and "DAC1", followed by whitespace, ";", or the end of the text.
+   Other TXT records are ignored, so DAC records can share a name with
+   other TXT records.  A DAC record is well-formed if it matches the
+   "record" rule, contains no tag name more than once, and the value of
+   every tag defined in this document matches the rule given for it,
+   with an "x" value that is also a valid calendar date.  A DAC record
+   that is not well-formed is malformed.
+
+   *  Tag names are case-sensitive.  Verifiers MUST ignore tags they do
+      not recognize.  New tags are registered as described in
+      Section 13.3.1; adding a tag does not change the version.
+
+   *  A TXT record consisting of several character-strings is
+      interpreted as their concatenation without separators, as in
+      Section 3.3 of [RFC7208].  Publishers SHOULD keep each record
+      within a single character-string of at most 255 octets.
+
+   *  Domain names in records are in canonical form: A-labels [RFC5890]
+      in lowercase, without a trailing dot, at most 253 octets long,
+      with a last label that is not entirely numeric.  A label with
+      hyphens in both the third and fourth positions MUST be a valid
+
+
+
+Manelidis                 Expires 24 April 2027                 [Page 9]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+      A-label.  The "domain" rule expresses the character-level
+      constraints; a name violating the others is malformed.  Verifiers
+      do not repair names.
+
+4.2.  Claim Record
+
+   A child domain declares its parent with one TXT record at the name
+   formed by prepending the label "_affiliation" to the child domain:
+
+   _affiliation.embank.example. 3600 IN TXT
+       "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+   p (required):  The parent domain, matching the "p-value" rule.
+
+   t (required):  The token, matching the "t-value" rule (Section 4.6).
+
+   A child domain has at most one parent and MUST NOT publish more than
+   one DAC record at its "_affiliation" name; a domain that is also a
+   parent includes its marker tags in the same record (Section 4.4).
+   The parent domain MUST NOT be the child domain itself.  The claim
+   name MAY be a CNAME, for example when the child's records are managed
+   by the parent's operator.
+
+4.3.  Scope of an Affiliation
+
+   A claim is published at, and an affiliation is verified for, one
+   domain name.  Organizations typically publish claims at their
+   registrable domains, such as "embank.example", not at every host
+   name.
+
+   A relying party assessing a name below such a domain, for example
+   "marketing.embank.example", determines the domain it regards as
+   responsible for that name, as it already does when attributing
+   reputation, and verifies that domain.  Claims are not published at
+   names like "marketing.embank.example" for this purpose.
+
+   By default, a confirmation states nothing about names below the child
+   domain, and relying parties apply their usual practice to them.  A
+   parent that operates, or authorizes the operation of, every name
+   below the child states this by including the "s" tag with the value
+   "subtree" in the confirmation (Section 4.5).  The confirmation then
+   also covers every name below the child.  A parent MUST NOT include it
+   when names below the child are operated by parties not acting under
+   the parent's authority, such as customers of a hosting or platform
+   service (Section 11.12).
+
+   If a name below a child with a subtree confirmation publishes its own
+   claim, that claim governs the name and the names below it.
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 10]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+4.4.  Marker Record
+
+   A parent domain that confirms affiliations publishes exactly one DAC
+   record at the name formed by prepending "_affiliation" to the parent
+   domain.  A domain that is both a child and a parent publishes a
+   single record there containing both the claim tags and the marker
+   tags.
+
+   _affiliation.bank.example. 3600 IN TXT
+       "v=DAC1; r=mailto:abuse@bank.example"
+
+   c (optional):  The confirmation channel.  This document defines
+      "dns", the default (Section 4.5), and "https" (Section 7).  Other
+      values are registered as described in Section 13.3.2.  With
+      "https", DNS confirmation records are not consulted.
+
+   r (optional):  A URI [RFC3986] for reports of abuse concerning the
+      parent's affiliated domains, with scheme "mailto" [RFC6068] or
+      "https".  Semicolons and whitespace in the URI are percent-
+      encoded.  Verifiers ignore an "r" tag with any other scheme.
+
+   m (optional):  The mode: "enforce", the default, or "test".  In
+      "test" mode the parent is deploying the protocol and asks that its
+      confirmations not be acted on (Section 10.3).  Verifiers treat any
+      value other than "enforce" as "test".
+
+   f (optional):  A URI to which verifiers may send reports of claims
+      naming this parent that were not confirmed (Section 9).  It is
+      either "https://" followed by a host and an optional path, without
+      userinfo, port, query, or fragment, or "mailto:" followed by
+      exactly one address, without header fields.  The host, or the
+      domain of the address, is in canonical form (Section 4.1) and is
+      the parent domain or a name below it.  Verifiers ignore an "f" tag
+      that does not meet these conditions.
+
+   The marker MUST be a TXT record owned by the "_affiliation" name
+   itself, not data reached through a CNAME or DNAME record.  The marker
+   makes "_affiliation" an existing node in the parent zone, so that a
+   wildcard higher in the zone cannot answer for names below it
+   (Section 11.7).  The "_affiliation" name MAY be delegated as a
+   separate zone, in which case that zone's operator publishes the
+   marker and confirmations.  A DNAME record [RFC6672] at that name
+   redirects the queries for confirmations to another zone and has the
+   same effect as delegating them.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 11]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+4.5.  Confirmation Record (DNS Channel)
+
+   For each confirmed child, a parent using the DNS channel publishes
+   one TXT record at the name formed by prepending the child's token to
+   the parent's "_affiliation" name:
+
+   mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example.
+       3600 IN TXT "v=DAC1; d=embank.example"
+
+   d (required):  The child domain, matching the "d-value" rule.
+
+   s (optional):  The scope.  The value "subtree" states that the
+      confirmation also covers every name below the child domain
+      (Section 4.3).  Verifiers ignore any other value; other scopes
+      would be defined with a new tag.
+
+   x (optional):  The last day of validity, as a full-date in UTC
+      [RFC3339], matching the "x-value" rule.  The confirmation applies
+      until the end of that day, 23:59:59 UTC, and not afterwards.
+      Without "x", the confirmation applies until it is removed.
+
+   An expiry date suits domains used for a limited time, such as
+   campaign sites, and also limits the consequences of a confirmation
+   that is not removed when its domain changes hands (Section 11.4), for
+   example when it is set to the domain's registration expiry date and
+   updated on renewal.  A parent extends a confirmation by replacing the
+   record with one carrying a later date.  Registration expiry dates
+   normally move forward when domains renew automatically, so a parent
+   tying "x" to them updates the confirmation at each renewal.
+
+   A confirmation name MUST NOT hold more than one DAC record.  It MAY
+   be a CNAME, for example to a name hosted by a DNS provider.  The
+   parent MUST NOT publish wildcard records at or below its
+   "_affiliation" name.
+
+4.6.  Tokens
+
+   A token links one claim to one confirmation.  It makes confirmation
+   names unpredictable, so that a parent's confirmations cannot be found
+   by guessing names, whether by online queries or, for DNSSEC-signed
+   zones using NSEC3, by offline guessing of hashed names.  A token is
+   not a secret: it is published in the claim and appears in queries.
+   The protocol's resistance to forged affiliations does not depend on
+   tokens being unknown (Section 11.3).
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 12]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   *  A token MUST contain at least 128 bits, and SHOULD contain 160
+      bits, from a cryptographically secure random source [RFC4086].  At
+      128 bits, guessing a confirmation name is infeasible and
+      collisions between tokens are negligible.
+
+   *  A token is encoded in base32 (Section 6 of [RFC4648]) with
+      lowercase letters and without padding, giving 26 to 52 characters;
+      a 160-bit token is 32 characters, well within the 63-octet limit
+      on a DNS label [RFC1035].  Case-sensitive encodings such as base64
+      cannot be used, because DNS name matching ignores case [RFC4343]
+      and some resolvers alter the case of query names.
+
+   *  Tokens are opaque; verifiers do not decode them.  A parent MUST
+      use a different token for each child and SHOULD use a new token
+      when re-establishing an affiliation that was previously ended.
+
+5.  Publishing an Affiliation
+
+5.1.  Creating an Affiliation
+
+   1.  The parent operator publishes the marker, once, before its first
+       affiliation.
+
+   2.  The parent operator generates a token for the child and publishes
+       the confirmation (Section 4.5 or Section 7).
+
+   3.  The child's operator publishes the claim.  When parent and child
+       are operated by the same organization, one tool performs all of
+       these steps (Section 10.1).
+
+   Publishing the confirmation first lets the affiliation verify as soon
+   as the claim is visible.
+
+5.2.  Ending an Affiliation
+
+   The parent operator ends an affiliation by removing the confirmation;
+   no change at the child is needed.  A parent operator MUST remove the
+   confirmation for a child domain that it no longer operates or
+   authorizes, including when the child domain is transferred, sold, or
+   allowed to expire, except as described in Section 5.3.  A claim left
+   in the child's zone, or copied there by a later registrant, has no
+   effect once the confirmation is gone.
+
+   A parent that withdraws from the protocol removes its marker, which
+   ends all of its affiliations.
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 13]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+5.3.  Moving a Child to Another Parent
+
+   When a child domain moves from one parent to another, for example
+   after an acquisition, the operators proceed in this order so that the
+   child remains confirmed throughout:
+
+   1.  The new parent publishes its marker, if it has none, and a
+       confirmation for the child under a new token.
+
+   2.  The child replaces its claim with one naming the new parent and
+       the new token.
+
+   3.  After verifying that the child's claim names the new parent, and
+       after the TTL of the old claim has passed (86400 seconds if the
+       old parent does not know it), the old parent removes its
+       confirmation.
+
+   If the child domain leaves both organizations, for example because it
+   is sold, the parent removes its confirmation no later than the
+   transfer (Section 5.2), and the child's new operator replaces or
+   removes the claim.
+
+5.4.  Organizations with Several Levels
+
+   A parent domain can itself be the child domain of another
+   affiliation, for example when a subsidiary's primary domain is
+   affiliated with its group's primary domain.  Each affiliation is
+   confirmed separately and means only what Section 8 states about that
+   pair: a confirmation of the parent by its own parent says nothing
+   about the parent's children.  Verifiers MAY repeat the procedure with
+   the parent domain as the child domain.  A verifier that does so MUST
+   NOT follow more than two levels beyond the first parent and MUST stop
+   if a domain repeats.
+
+6.  Verification
+
+6.1.  Inputs and Outputs
+
+   The input is a child domain in canonical form (Section 4.1).
+   Verifiers that accept names containing non-ASCII characters convert
+   them to A-labels as specified in [RFC5891]; the processing of [UTS46]
+   with non-transitional processing is a common way of doing so.  A name
+   that cannot be converted yields "permerror".
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 14]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   The output is a result (Section 6.3) and, when available, the parent
+   domain, the channel, whether the result is authenticated
+   (Section 6.5), whether the confirmation covers names below the child
+   domain (Section 4.3), the parent's mode and abuse contact, and the
+   time for which the result may be reused (Section 6.6).
+
+6.2.  Procedure
+
+   Verifiers MUST use a DNS interface that exposes the answer section of
+   responses, so that CNAME [RFC1034] and DNAME [RFC6672] records in an
+   answer can be detected.  In the steps below, "no record" means that
+   the query returned NXDOMAIN, or NOERROR with no DAC record; this
+   includes a name that exists only as an empty non-terminal.  NXDOMAIN
+   and NOERROR without data are treated alike because servers differ in
+   which they return.  Other DNS outcomes are handled as described in
+   Section 6.4.
+
+   1.  Query TXT at "_affiliation." followed by the child domain.
+
+       *  No record: the result is "none".
+
+       *  More than one DAC record, or a malformed one: "permerror".
+
+       *  Neither a "p" nor a "t" tag: the record is only a marker, and
+          the result is "none".
+
+       *  Only one of "p" and "t", or "p" equal to the child domain:
+          "permerror".
+
+   2.  Query TXT at "_affiliation." followed by the parent domain.  Any
+       "p" and "t" tags in the marker belong to the parent's own claim
+       and are ignored here.  Apply the following checks in order.
+
+       a.  The answer contains a CNAME or DNAME record: "permerror".
+
+       b.  No record: "not-confirmed".
+
+       c.  More than one DAC record, or a malformed one: "permerror".
+
+       d.  A "c" value not supported by the verifier: "not-confirmed".
+
+   3.  If the channel is "dns", query TXT at the token, followed by
+       "._affiliation.", followed by the parent domain.
+
+       *  No record: "not-confirmed".
+
+       *  More than one DAC record, or a malformed one: "permerror".
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 15]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+       If the channel is "https", obtain the confirmation as described
+       in Section 7.
+
+   4.  Examine the confirmation's "d" tag.
+
+       *  Missing: "permerror".
+
+       *  Not equal to the child domain: "not-confirmed".
+
+       *  Equal to the child domain, but the confirmation has an "x" tag
+          and the time of verification is after the end of that day:
+          "not-confirmed".
+
+       *  Otherwise: "confirmed".  If the confirmation has "s=subtree",
+          the verifier reports that the result covers names below the
+          child domain.
+
+   Domain names are compared as octet strings in canonical form.  The
+   procedure does not query any other names, follow references found in
+   record content, or consult a list of public suffixes.
+
+6.3.  Results
+
+   confirmed:  The parent confirms the child.
+
+   not-confirmed:  The child claims a parent, and the verifier did not
+      obtain a confirmation.  This covers a parent that does not
+      participate, an ended affiliation, a copied or fabricated claim,
+      and a channel the verifier does not support.
+
+   none:  The child makes no claim.
+
+   temperror:  A temporary failure prevented a result; the verifier can
+      retry later.
+
+   permerror:  A record is malformed or the configuration is invalid;
+      the result will not change until a record is corrected.
+
+   Only "confirmed" establishes an affiliation.
+
+6.4.  DNS Errors
+
+   Any response code other than NOERROR and NXDOMAIN, a timeout, or a
+   truncated response that cannot be retried over TCP yields
+   "temperror".  A response that fails DNSSEC validation ("bogus"
+   [RFC4035]) also yields "temperror" and MUST NOT contribute to a
+   "confirmed" result.  Verifiers MUST support DNS over TCP.
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 16]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+6.5.  Authenticated Results
+
+   For the DNS channel, a result is authenticated if all DNS answers
+   used were validated as secure [RFC4035], either by the verifier or by
+   a validating resolver reached over a trusted path.
+
+   For the HTTPS channel, the Web PKI authenticates the confirmation,
+   but the decision to use that channel was taken from the marker.  The
+   result is authenticated only if the claim and the marker were
+   validated as secure.  Otherwise, a forged marker could select the
+   HTTPS channel for a parent that does not use it (Section 11.5).
+
+   Verifiers report whether a result is authenticated.  The abuse
+   contact is taken from the marker and is authenticated only when the
+   marker is.
+
+6.6.  Caching
+
+   A verifier MAY reuse a result for the smallest of: the TTLs [RFC2181]
+   of the DNS answers used, where the TTL of a negative answer is
+   determined as in [RFC2308]; the freshness lifetime of the HTTPS
+   response (Section 7.2); the time remaining until a confirmation's
+   expiry; and 86400 seconds.
+
+   After "temperror", verifiers retry with increasing intervals and
+   SHOULD NOT retry more often than once a minute.  Resolvers that serve
+   stale data [RFC8767] can extend the time for which an ended
+   affiliation still verifies.
+
+7.  HTTPS Channel
+
+   A parent whose marker contains "c=https" publishes confirmations as
+   HTTPS resources instead of DNS records, which suits operators that
+   manage such data through a web application rather than their DNS
+   provider.  The claim and the marker remain DNS records; selecting
+   this channel is done in the parent's DNS zone.
+
+7.1.  Resource
+
+   The confirmation for a token is the resource identified by:
+
+   https://<parent domain>/.well-known/affiliation/<token>
+
+   A confirmed token is served with status code 200 and media type
+   "text/plain".  The content is one DAC confirmation record, with the
+   same syntax as in the DNS, optionally followed by a single CRLF or
+   LF:
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 17]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   Request:
+     GET https://bank.example/.well-known/affiliation/
+                 mfrggzdfmztwq2lknnwg23tpobyxe43u
+     Accept: text/plain
+
+   Response:
+     200 OK
+     Content-Type: text/plain
+     Cache-Control: max-age=3600
+
+     v=DAC1; d=embank.example
+
+   A token that is not confirmed is answered with 404 (Not Found) or 410
+   (Gone).
+
+7.2.  Fetching
+
+   A verifier fetching a confirmation:
+
+   *  MUST use the "https" scheme on port 443, with the parent domain as
+      the host, and MUST validate the server's certificate for that name
+      [RFC9110] [RFC9525];
+
+   *  MUST NOT follow redirects;
+
+   *  MUST NOT connect to addresses that the IANA special-purpose
+      address registries [RFC6890] mark as not globally reachable, and
+      MUST connect to the address it checked;
+
+   *  MUST NOT send cookies or other credentials; and
+
+   *  MUST read no more than 1024 octets of content and SHOULD limit the
+      request to 10 seconds.
+
+   Responses are handled as follows:
+
+   *  200 with media type "text/plain" (parameters are ignored) and
+      content that is exactly one DAC record: the record is the
+      confirmation, examined as in step 4 of Section 6.2.  A malformed
+      record, other content, another media type, or more than 1024
+      octets yields "permerror".
+
+   *  404 or 410: "not-confirmed".
+
+   *  5xx, a connection failure, a timeout, or a TLS failure:
+      "temperror".
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 18]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   *  Any other status code, including 3xx, or a parent domain that has
+      no globally reachable address: "permerror".
+
+   The freshness lifetime of a response is zero if it carries Cache-
+   Control no-store or no-cache, is otherwise taken from a max-age
+   directive if present, and is otherwise 3600 seconds.
+
+8.  Meaning of a Confirmation
+
+   This section states what a "confirmed" result means, so that relying
+   parties can use it consistently.  It does not prescribe relying-party
+   policy.
+
+8.1.  What a Confirmation States
+
+   A "confirmed" result means that, at the time of verification, the
+   parent operator had published a statement that:
+
+   1.  the child domain is operated by the parent operator or by a party
+       acting under its authority; and
+
+   2.  reports of abuse concerning the child domain may be directed to
+       the parent operator, at the contact in the marker or by its usual
+       means.
+
+   With "s=subtree", both statements also apply to every name below the
+   child domain.
+
+   The second element distinguishes an affiliation from a mere
+   association: a parent that confirms a child is the expected recipient
+   of complaints about it.  The statement is made by whoever controls
+   the parent domain's DNS zone, or its HTTPS origin when that channel
+   is used.
+
+8.2.  What a Confirmation Does Not State
+
+   A confirmation says nothing about the trustworthiness, identity, or
+   licensing of the parent operator, or about the content served by the
+   child.  A confirmation from a parent domain registered yesterday is
+   as valid as one from a long-established organization.  A confirmation
+   therefore conveys at most the standing that a relying party already
+   attributes to the parent domain.
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 19]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+8.3.  Considerations for Relying Parties
+
+   *  Takedown decisions.  When a domain resembling a protected name is
+      confirmed as affiliated with a parent that the relying party
+      already regards as legitimate, the resemblance is unlikely to be
+      an impersonation of the parent's own name, and a conflict with
+      another organization's name is a dispute between organizations.
+      Relying parties can direct such reports to the parent's abuse
+      contact or to the dispute processes for name conflicts.  A
+      confirmation alone does not justify delaying action on abuse that
+      has been observed (Section 11.9).
+
+   *  Reputation.  A relying party may extend to a confirmed child some
+      or all of the reputation it attributes to the parent.  Attributing
+      more standing to the child than to the parent is inconsistent with
+      the meaning above, and taking abuse observed on a confirmed child
+      into account when assessing the parent gives parent operators a
+      reason to confirm only domains they control.
+
+   *  Testing mode.  Confirmations from a parent in "test" mode are
+      intended for reporting to the parent, not for decisions.
+
+   *  Other results.  "none", "not-confirmed", "temperror", and
+      "permerror" are not, by themselves, evidence that a domain is
+      malicious.  Most domains publish no claim.  A claim that a well-
+      known parent does not confirm may be an attempt to borrow its
+      standing, but it may also result from misconfiguration or from
+      records an attacker caused to appear in a victim's zone
+      (Section 11.10).
+
+   *  Assurance.  Relying parties taking consequential actions can
+      consider whether a result was authenticated (Section 6.5) and, for
+      unauthenticated results, the measures in Section 11.5.
+
+9.  Failure Reports
+
+   A parent can ask verifiers to report claims that name it but are not
+   confirmed, for example by a domain that copied a claim or fabricated
+   one.  Such reports let the parent learn about attempts to borrow its
+   standing, and about confirmations that have expired or been removed
+   by mistake.  Sending reports is optional for verifiers.
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 20]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+9.1.  When Reports Are Sent
+
+   A verifier MAY send a report when it obtained the parent's marker,
+   the marker carries an "f" tag, and the result is "not-confirmed" or
+   "permerror" for a reason arising after step 2 of Section 6.2, that
+   is, a missing, mismatched, expired, or malformed confirmation, or a
+   confirmation that could not be obtained over HTTPS.  Reports are not
+   sent for "temperror" or for an unsupported channel.  Reports are
+   particularly useful while a parent is in "test" mode, and verifiers
+   may send them then.
+
+   A verifier MUST NOT send a report to an "f" URI that does not meet
+   the conditions in Section 4.4; in particular, reports go only to the
+   parent domain or names below it, which prevents a marker from
+   directing reports at third parties.  A parent that wants reports
+   processed by a provider points a name below its domain, or its mail
+   routing, at that provider.  Because an attacker can create any number
+   of child domains, a verifier MUST send at most one message per report
+   destination in 24 hours, combining reports into it, and SHOULD limit
+   the number of reports per message, for example to 1000.
+
+9.2.  Report Format
+
+   A report is a JSON [RFC8259] array of objects, each with the
+   following members:
+
+   version:  The string "DAC1".
+
+   observed:  The time of verification, as an RFC 3339 date-time
+      [RFC3339] in UTC.
+
+   child:  The child domain, in canonical form.
+
+   parent:  The parent domain, in canonical form.
+
+   result:  "not-confirmed" or "permerror".
+
+   reason:  One of the values in the "DAC Report Reasons" registry
+      (Section 13.3.3).
+
+   reporter (optional):  A domain name identifying the organization
+      sending the report.
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 21]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [
+     {
+       "version": "DAC1",
+       "observed": "2026-10-22T09:30:00Z",
+       "child": "embank-login.example",
+       "parent": "bank.example",
+       "result": "not-confirmed",
+       "reason": "different-child",
+       "reporter": "filter.example"
+     }
+   ]
+
+   Receivers ignore members and reason values they do not recognize.
+
+9.3.  Delivery
+
+   For an "https" URI, the verifier sends the report in an HTTP POST
+   request with media type "application/json", subject to the same
+   restrictions as in Section 7.2, except that the content may be up to
+   65536 octets.  For a "mailto" URI, the verifier sends an email
+   message with the subject "DAC report for" followed by the parent
+   domain, whose body, or one of whose body parts, is the report with
+   media type "application/json".  Verifiers SHOULD send report email
+   from a domain that authenticates its mail, so that receivers can
+   filter it.  Failure to deliver a report is not retried more than
+   once.
+
+9.4.  Handling Reports
+
+   Reports are unauthenticated assertions by whoever sent them.  A
+   parent treats a report as a prompt to verify the named child itself,
+   not as evidence, and rate-limits what it accepts.  Reports are not a
+   substitute for the monitoring described in Section 10.7.
+
+10.  Operational Considerations
+
+10.1.  Automation and Inventory
+
+   Unless an expiry date is used, the records contain no dates, so
+   creating an affiliation is a one-time operation with nothing to
+   renew.  An organization with many domains maintains the records with
+   a tool that generates tokens and writes records through its DNS
+   providers' interfaces.
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 22]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   Affiliations go stale when domains change hands.  The most reliable
+   control is to derive confirmations from the organization's registrar
+   accounts or domain inventory, so that a confirmation is removed when
+   its domain leaves the inventory.  Registrars and DNS providers can
+   offer this as a service.
+
+10.2.  TTLs, Signatures, and Revocation Time
+
+   The time for an ended affiliation to stop verifying is normally
+   bounded by the TTL of the confirmation (or the freshness lifetime of
+   the HTTPS confirmation) and by the 86400-second limit in Section 6.6;
+   serve-stale resolvers and replay can extend it (Section 6.6,
+   Section 11.6).  A TTL of 3600 seconds is a reasonable default.  For
+   signed zones, the validity period of signatures over confirmation
+   records also bounds how long a deleted confirmation can be replayed
+   (Section 11.6); parents wanting prompt revocation keep it short for
+   names below "_affiliation".  The negative-caching TTL of the parent
+   zone affects how soon a new confirmation becomes visible.
+
+10.3.  Staged Deployment
+
+   A parent can publish its marker with "m=test", create confirmations,
+   and check results before changing the marker to "enforce".  Relying
+   parties can likewise verify in a reporting-only mode before acting on
+   results.
+
+10.4.  Choosing and Changing Channels
+
+   The DNS channel needs only DNS records and benefits from DNSSEC.  The
+   HTTPS channel suits parents that prefer to manage confirmations in a
+   web application; it requires that the parent domain itself serve
+   HTTPS on port 443 without redirecting, which many organizations' apex
+   domains do not do by default.  A parent that changes channel
+   publishes confirmations in the new channel before changing the marker
+   and removes the old ones after the marker's TTL has passed.
+
+   Confirmations may be hosted by a DNS provider through CNAME records
+   or by delegating the "_affiliation" name; the provider can then
+   create and remove confirmations (Section 11.7).
+
+10.5.  Load and Scale
+
+   Verification costs at most three TXT queries.  Markers are shared by
+   all children of a parent and are cached accordingly.  Most domains
+   publish no claim, and for them the cost is one query.  A parent using
+   the HTTPS channel receives a request for each verification of one of
+   its children that is not answered from a cache; such parents SHOULD
+   serve confirmations from infrastructure able to handle that load and
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 23]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   SHOULD set a Cache-Control max-age.
+
+10.6.  DNS Configuration
+
+   *  Parents SHOULD sign their zones with DNSSEC so that verifiers can
+      obtain authenticated results.  A signed parent zone SHOULD use
+      NSEC3 [RFC5155] with the parameters in [RFC9276], compact denial
+      of existence [RFC9824], or minimally covering NSEC records
+      [RFC4470], and SHOULD NOT use NSEC records that allow the zone to
+      be walked (Section 12).
+
+   *  Parents SHOULD restrict zone transfers to their own secondary
+      servers [RFC5936] [RFC9103].
+
+   *  Parents and children MUST NOT publish wildcard records at or below
+      their "_affiliation" names, and SHOULD NOT publish wildcard CNAME
+      records that cover those names.
+
+10.7.  Monitoring
+
+   Parent operators can check newly observed domains, for example from
+   Certificate Transparency logs, for claims naming their domain.  A
+   claim carrying a token the parent did not issue indicates a domain
+   attempting to borrow its standing; a claim for a domain no longer in
+   the parent's inventory indicates a confirmation that should already
+   have been removed.
+
+11.  Security Considerations
+
+11.1.  Threat Model
+
+   The attacker wants a domain it controls to verify as affiliated with
+   a parent it does not control, to prevent a legitimate affiliation
+   from verifying, to use an affiliation to delay action against abuse,
+   or to learn a parent's affiliated domains.  The attacker can register
+   domains, publish records in zones it controls, place content on web
+   hosting it has access to, observe public DNS data, and in some cases
+   forge or replay DNS responses on the path to a verifier.  Compromise
+   of the parent's DNS zone or web origin is discussed in Section 11.8.
+
+11.2.  Fabricated Claims
+
+   Anyone can publish a claim naming any parent.  The claim is confirmed
+   only if a record exists under the parent's "_affiliation" node, or at
+   the parent's HTTPS origin when the parent has selected that channel,
+   that names the claiming domain.  Absent forged responses
+   (Section 11.5), only the parent operator can create such a record.
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 24]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+11.3.  Copied Claims and Token Disclosure
+
+   Claims and tokens are public.  An attacker that copies a legitimate
+   claim to its own domain obtains a confirmation naming the legitimate
+   child, and the result is "not-confirmed".  The binding between token
+   and child is in the parent's confirmation, which the attacker cannot
+   alter.
+
+11.4.  Stale Confirmations
+
+   If a parent fails to remove the confirmation of a child domain that
+   has changed hands, the new registrant of the child inherits the
+   affiliation.  This is the most likely failure in practice.  The
+   requirement in Section 5.2, inventory-driven automation
+   (Section 10.1), and monitoring (Section 10.7) address it.  Relying
+   parties with access to registration data [RFC9083] [RFC9224] can
+   treat a confirmation with caution when the child's registration
+   changed after the confirmation was first observed.
+
+   Likewise, if a parent domain expires and is registered by someone
+   else, the new registrant can confirm arbitrary domains.  Relying
+   parties that attribute standing to a parent based on its history can
+   reassess a parent whose registration has changed rather than carrying
+   standing across the change.
+
+11.5.  Forged DNS Responses
+
+   An attacker able to forge DNS responses to a verifier, for example
+   through cache poisoning [RFC5452] or by hijacking routes to
+   authoritative servers, can produce any result for unsigned zones.
+   For the DNS channel, the forgery has to cover the parent's records;
+   forging the claim alone cannot produce "confirmed".
+
+   Forging the marker can switch the channel in either direction.  In
+   particular, an attacker that can forge the marker of an unsigned
+   parent zone and can place a file at a path under the parent's HTTPS
+   origin, for example through shared hosting or an upload feature, can
+   obtain "confirmed" for any domain.  Such a result is not
+   authenticated (Section 6.5), which is why the Web PKI alone does not
+   make an HTTPS result authenticated.
+
+   Results authenticated with DNSSEC are not affected by forged
+   responses.  Relying parties taking consequential actions on
+   unauthenticated results can perform the queries from several network
+   locations and require the answers to agree, as certification
+   authorities are required to do for domain validation [CABF-BR].
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 25]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+11.6.  Replay of Deleted Records
+
+   An attacker on the path to a verifier can replay a confirmation that
+   the parent has deleted.  For unsigned zones, any response can be
+   forged anyway.  For signed zones, a replayed RRset validates until
+   its signatures expire, which can be weeks.  Parents that want
+   deletion to take effect promptly against such attackers use short
+   signature validity periods for names below "_affiliation"
+   (Section 10.2).  A confirmation with an expiry date cannot be
+   replayed to effect beyond that date.
+
+11.7.  Wildcards, Aliases, and Delegation
+
+   If a parent zone contained a wildcard such as "*.bank.example" and no
+   "_affiliation" node existed, queries for confirmation names would be
+   answered from the wildcard [RFC4592].  If that wildcard were a CNAME
+   into a zone operated by a third party, such as a hosting platform, a
+   tenant of that platform might be able to publish a TXT record there
+   confirming a domain of its choosing.  The marker prevents this: since
+   its owner name exists, a wildcard above it cannot match names below
+   it, and verifiers reject a marker reached through a CNAME or DNAME
+   record.  An empty non-terminal at "_affiliation" also blocks the
+   wildcard but yields "not-confirmed" because there is no marker.
+
+   Confirmation names may be CNAMEs, and the "_affiliation" name may be
+   delegated or carry a DNAME record.  The operator of the target or
+   delegated zone can then create and remove confirmations.  Parents
+   delegate in this way only to parties they would trust to publish
+   confirmations on their behalf.
+
+11.8.  Compromise of the Parent
+
+   An attacker controlling the parent's DNS zone can confirm any domain;
+   it can also redirect the parent domain itself, so DAC does not add to
+   the consequences of that compromise.  An attacker controlling only
+   the parent's web origin can confirm domains through the HTTPS channel
+   only if the parent's marker selects that channel or the marker is
+   forged (Section 11.5).  Verifiers report the channel used, and
+   relying parties concerned about web compromise can give less weight
+   to confirmations obtained over HTTPS.  A parent can detect
+   confirmations it did not create by comparing them with its inventory,
+   and recovers by deleting them.
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 26]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+11.9.  Use of Affiliations to Deflect Takedowns
+
+   An attacker that controls a parent domain to which relying parties
+   attribute standing, for example an expired domain re-registered for
+   its history or a compromised DNS account, can confirm look-alike
+   domains used for phishing.  Takedown requests may then be directed to
+   an abuse contact that the attacker controls.  Relying parties should
+   not let a confirmation alone delay action against abuse they have
+   observed, and can reassess parents whose registration has changed
+   (Section 11.4) or whose set of confirmed domains grows unexpectedly.
+
+11.10.  Inducing Adverse Results
+
+   An attacker able to place a TXT record at "_affiliation" under a
+   victim's domain, for example through a dangling or wildcard CNAME in
+   the victim's zone pointing to a platform the attacker uses, controls
+   the victim's claim.  It can make the victim appear to claim a parent
+   that does not confirm it, which is one reason why results other than
+   "confirmed" are not by themselves evidence of malice (Section 8.3).
+   It can also name a parent the attacker operates and confirm the claim
+   there, making the victim appear affiliated with the attacker and
+   directing abuse reports about the victim to the attacker's contact.
+   Children therefore MUST NOT publish wildcards covering their
+   "_affiliation" name (Section 10.6) and SHOULD make their claim name a
+   CNAME only to names they or their parent operator control.
+
+11.11.  Resource Consumption
+
+   Verification is bounded at three TXT queries and one HTTPS request
+   with its address resolution, with no recursion and no references in
+   record content, avoiding the lookup-limit problems experienced with
+   [RFC7208]; following several levels (Section 5.4) is bounded at nine
+   queries.
+
+   An attacker can publish claims with random tokens naming a
+   participating parent, so that each verification causes a query for a
+   new name at the parent's authoritative servers, or a request to its
+   HTTPS origin.  Aggressive use of DNSSEC-validated caches [RFC8198]
+   can absorb such queries only where denial of existence covers ranges
+   of names; the configurations recommended in Section 10.6 to prevent
+   zone walking, and unsigned zones, give up that protection, so parents
+   using them depend on verifiers limiting their query rates.  Verifiers
+   that accept names to verify from untrusted sources SHOULD rate-limit
+   the queries and requests they send for each parent domain.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 27]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+11.12.  Subtree Confirmations
+
+   A subtree confirmation extends the parent's statement to names that
+   the parent does not list individually.  If anyone other than the
+   parent's organization can create names below the child, for example
+   because the child offers subdomains to customers or has a delegation
+   or wildcard record pointing to a third party, those parties' names
+   would appear affiliated with the parent.  A subtree confirmation is
+   also not evidence about the content of any particular name below the
+   child; abuse observed there is handled as in Section 11.9.  This is
+   why parents include "s=subtree" only for children whose entire
+   namespace they control (Section 4.3).  A dangling record below the
+   child, such as a CNAME to a deprovisioned cloud resource, has the
+   same effect if taken over, so parents using subtree confirmations
+   keep the child's zone free of such records.
+
+11.13.  Failure Reports
+
+   An attacker can publish many claims naming a parent so that verifiers
+   send reports to it; the per-pair limit in Section 9.1 and parent-side
+   rate limiting bound the effect.  Restricting report destinations to
+   the parent's own names prevents markers from being used to direct
+   reports at third parties.  A forged marker can direct reports from a
+   verifier to a name chosen by the attacker only within the same limits
+   as other forged responses (Section 11.5).  Reports are never evidence
+   that a domain is malicious (Section 9.4).
+
+11.14.  Expiry Dates
+
+   Expiry dates are evaluated against the verifier's clock.  An expiry
+   date limits how long a forgotten confirmation remains effective but
+   does not replace removing confirmations (Section 5.2).
+
+11.15.  Confusable Names
+
+   An attacker can create its own parent and children with names
+   resembling a legitimate organization's.  Their affiliations verify,
+   but convey only the standing of the attacker's parent (Section 8.2).
+   User interfaces that display affiliations SHOULD display names in a
+   form that makes confusable characters evident [UTS39].
+
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 28]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+12.  Privacy Considerations
+
+   A claim publicly discloses that the child declares an affiliation
+   with the parent; this disclosure is the purpose of the claim.  The
+   parent publishes no list of its domains: a query at the parent
+   reveals nothing about which children exist, and confirmations can be
+   located only from the corresponding claims.  A third party can still
+   find affiliated domains by examining domains one by one, for example
+   those listed in Certificate Transparency logs or zone files, so
+   organizations should assume that every domain publishing a claim is
+   discoverable.  Domains that publish no claim, such as names held
+   defensively or not yet launched, are not revealed.
+
+   This property depends on confirmation names not being enumerable.
+   Zone transfers and DNSSEC denial of existence using NSEC records can
+   reveal them; NSEC3 hashes of names containing random tokens of 128
+   bits or more cannot feasibly be reversed.  Section 10.6 gives
+   recommendations.
+
+   Queries reveal to resolver operators, and to passive DNS collections,
+   which domains a verifier is evaluating.  QNAME minimisation [RFC9156]
+   reduces exposure of full names to servers higher in the DNS tree.
+
+   Failure reports disclose to the parent which of the verifier's
+   evaluations involved claims naming the parent.  Verifiers that do not
+   wish to disclose this do not send reports, and the reports contain no
+   information about why an evaluation took place.
+
+   The abuse contact in the marker is published, and parents SHOULD use
+   role addresses.  Publishers SHOULD NOT include personal data in
+   records.
+
+13.  IANA Considerations
+
+13.1.  Underscored and Globally Scoped DNS Node Name
+
+   IANA is requested to add the following entry to the "Underscored and
+   Globally Scoped DNS Node Names" registry [RFC8552]:
+
+                  +=========+==============+===========+
+                  | RR Type | _NODE NAME   | Reference |
+                  +=========+==============+===========+
+                  | TXT     | _affiliation | RFC XXXX  |
+                  +---------+--------------+-----------+
+
+                      Table 1: Underscored Node Name
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 29]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+13.2.  Well-Known URI
+
+   IANA is requested to register the following in the "Well-Known URIs"
+   registry [RFC8615]:
+
+   URI Suffix:  affiliation
+   Change Controller:  IETF
+   Specification Document:  RFC XXXX, Section 7
+   Status:  permanent
+   Related Information:  None
+
+13.3.  Domain Affiliation Confirmation Registry Group
+
+   IANA is requested to create a registry group titled "Domain
+   Affiliation Confirmation (DAC)" containing the three registries
+   below.  Registrations in all three are made under the Specification
+   Required policy [RFC8126].
+
+13.3.1.  DAC Tags
+
+   Each entry contains a tag name matching the "tag-name" rule, the
+   record in which it appears (claim, marker, or confirmation; a tag may
+   appear in more than one), a short description, and a reference.  The
+   designated expert checks that the tag is clearly defined and that
+   verifiers that ignore it remain interoperable.  The initial contents
+   are:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 30]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+     +=====+=============================+===============+===========+
+     | Tag | Record                      | Description   | Reference |
+     +=====+=============================+===============+===========+
+     | v   | claim, marker, confirmation | version       | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | p   | claim                       | parent domain | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | t   | claim                       | token         | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | c   | marker                      | confirmation  | RFC XXXX  |
+     |     |                             | channel       |           |
+     +-----+-----------------------------+---------------+-----------+
+     | r   | marker                      | abuse contact | RFC XXXX  |
+     |     |                             | URI           |           |
+     +-----+-----------------------------+---------------+-----------+
+     | m   | marker                      | mode          | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | d   | confirmation                | child domain  | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | s   | confirmation                | scope         | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | x   | confirmation                | expiry date   | RFC XXXX  |
+     +-----+-----------------------------+---------------+-----------+
+     | f   | marker                      | failure       | RFC XXXX  |
+     |     |                             | report URI    |           |
+     +-----+-----------------------------+---------------+-----------+
+
+                         Table 2: Initial DAC Tags
+
+13.3.2.  DAC Confirmation Channels
+
+   Each entry contains a channel name consisting of lowercase letters,
+   digits, and hyphens, a short description, and a reference.  The
+   designated expert checks that the specification states how a
+   confirmation is obtained, which outcomes map to which results, and
+   the security properties of the channel.  The initial contents are:
+
+          +=========+==============================+===========+
+          | Channel | Description                  | Reference |
+          +=========+==============================+===========+
+          | dns     | TXT record under the         | RFC XXXX  |
+          |         | parent's "_affiliation" name |           |
+          +---------+------------------------------+-----------+
+          | https   | Resource under "/.well-      | RFC XXXX  |
+          |         | known/affiliation/"          |           |
+          +---------+------------------------------+-----------+
+
+                Table 3: Initial DAC Confirmation Channels
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 31]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+13.3.3.  DAC Report Reasons
+
+   Each entry contains a reason value consisting of lowercase letters,
+   digits, and hyphens, a short description, and a reference.  The
+   designated expert checks that the reason describes a distinct outcome
+   of the procedure in Section 6.2 or of a channel.  The initial
+   contents are:
+
+      +========================+========================+===========+
+      | Reason                 | Description            | Reference |
+      +========================+========================+===========+
+      | unconfirmed-token      | No confirmation exists | RFC XXXX  |
+      |                        | for the claim's token  |           |
+      +------------------------+------------------------+-----------+
+      | different-child        | The confirmation names | RFC XXXX  |
+      |                        | another domain         |           |
+      +------------------------+------------------------+-----------+
+      | expired                | The confirmation's     | RFC XXXX  |
+      |                        | expiry date has passed |           |
+      +------------------------+------------------------+-----------+
+      | malformed-confirmation | The confirmation is    | RFC XXXX  |
+      |                        | malformed, not unique, |           |
+      |                        | or cannot be obtained  |           |
+      +------------------------+------------------------+-----------+
+
+                    Table 4: Initial DAC Report Reasons
+
+14.  Implementation Status
+
+   This section is to be removed before publishing as an RFC.
+
+   This section records the status of known implementations of the
+   protocol defined by this specification at the time of posting of this
+   Internet-Draft, and is based on a proposal described in [RFC7942].
+   The description of implementations in this section is intended to
+   assist the IETF in its decision processes in progressing drafts to
+   RFCs.  Please note that the listing of any individual implementation
+   here does not imply endorsement by the IETF.  Furthermore, no effort
+   has been spent to verify the information presented here that was
+   supplied by IETF contributors.  This is not intended as, and must not
+   be construed to be, a catalog of available implementations or their
+   features.  Readers are advised to note that other implementations may
+   exist.
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 32]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   According to [RFC7942], "this will allow reviewers and working groups
+   to assign due consideration to documents that have the benefit of
+   running code, which may serve as evidence of valuable experimentation
+   and feedback that have made the implemented protocols more mature.
+   It is up to the individual working groups to use this information as
+   they see fit".
+
+   Organization:  The author.
+
+   Implementation:  "dac", a library and command-line tool in Go:
+      https://github.com/tastypepperoni/dac.
+
+   Description:  A verifier implementing Section 6 and Section 7 with
+      its own DNS client, failure reporting (Section 9), a publisher
+      that maintains an inventory of affiliations and generates claims,
+      markers and confirmations, a server for the HTTPS channel, checks
+      of published records, and a test DNS server.  All test vectors of
+      Appendix C are automated tests, and every record example in this
+      document is checked against the ABNF in Section 4.1.
+
+   Level of maturity:  Prototype; not yet deployed.
+
+   Coverage:  All of the protocol.
+
+   Licensing:  BSD 3-Clause.
+
+   Contact:  The author.
+
+15.  References
+
+15.1.  Normative References
+
+   [RFC1034]  Mockapetris, P., "Domain names - concepts and facilities",
+              STD 13, RFC 1034, DOI 10.17487/RFC1034, November 1987,
+              <https://www.rfc-editor.org/info/rfc1034>.
+
+   [RFC1035]  Mockapetris, P., "Domain names - implementation and
+              specification", STD 13, RFC 1035, DOI 10.17487/RFC1035,
+              November 1987, <https://www.rfc-editor.org/info/rfc1035>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC2181]  Elz, R. and R. Bush, "Clarifications to the DNS
+              Specification", RFC 2181, DOI 10.17487/RFC2181, July 1997,
+              <https://www.rfc-editor.org/info/rfc2181>.
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 33]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [RFC2308]  Andrews, M., "Negative Caching of DNS Queries (DNS
+              NCACHE)", RFC 2308, DOI 10.17487/RFC2308, March 1998,
+              <https://www.rfc-editor.org/info/rfc2308>.
+
+   [RFC3339]  Klyne, G. and C. Newman, "Date and Time on the Internet:
+              Timestamps", RFC 3339, DOI 10.17487/RFC3339, July 2002,
+              <https://www.rfc-editor.org/info/rfc3339>.
+
+   [RFC3986]  Berners-Lee, T., Fielding, R., and L. Masinter, "Uniform
+              Resource Identifier (URI): Generic Syntax", STD 66,
+              RFC 3986, DOI 10.17487/RFC3986, January 2005,
+              <https://www.rfc-editor.org/info/rfc3986>.
+
+   [RFC4035]  Arends, R., Austein, R., Larson, M., Massey, D., and S.
+              Rose, "Protocol Modifications for the DNS Security
+              Extensions", RFC 4035, DOI 10.17487/RFC4035, March 2005,
+              <https://www.rfc-editor.org/info/rfc4035>.
+
+   [RFC4086]  Eastlake 3rd, D., Schiller, J., and S. Crocker,
+              "Randomness Requirements for Security", BCP 106, RFC 4086,
+              DOI 10.17487/RFC4086, June 2005,
+              <https://www.rfc-editor.org/info/rfc4086>.
+
+   [RFC4592]  Lewis, E., "The Role of Wildcards in the Domain Name
+              System", RFC 4592, DOI 10.17487/RFC4592, July 2006,
+              <https://www.rfc-editor.org/info/rfc4592>.
+
+   [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
+              Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
+              <https://www.rfc-editor.org/info/rfc4648>.
+
+   [RFC5234]  Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
+              Specifications: ABNF", STD 68, RFC 5234,
+              DOI 10.17487/RFC5234, January 2008,
+              <https://www.rfc-editor.org/info/rfc5234>.
+
+   [RFC5890]  Klensin, J., "Internationalized Domain Names for
+              Applications (IDNA): Definitions and Document Framework",
+              RFC 5890, DOI 10.17487/RFC5890, August 2010,
+              <https://www.rfc-editor.org/info/rfc5890>.
+
+   [RFC5891]  Klensin, J., "Internationalized Domain Names in
+              Applications (IDNA): Protocol", RFC 5891,
+              DOI 10.17487/RFC5891, August 2010,
+              <https://www.rfc-editor.org/info/rfc5891>.
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 34]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [RFC6068]  Duerst, M., Masinter, L., and J. Zawinski, "The 'mailto'
+              URI Scheme", RFC 6068, DOI 10.17487/RFC6068, October 2010,
+              <https://www.rfc-editor.org/info/rfc6068>.
+
+   [RFC6672]  Rose, S. and W. Wijngaards, "DNAME Redirection in the
+              DNS", RFC 6672, DOI 10.17487/RFC6672, June 2012,
+              <https://www.rfc-editor.org/info/rfc6672>.
+
+   [RFC6890]  Cotton, M., Vegoda, L., Bonica, R., Ed., and B. Haberman,
+              "Special-Purpose IP Address Registries", BCP 153,
+              RFC 6890, DOI 10.17487/RFC6890, April 2013,
+              <https://www.rfc-editor.org/info/rfc6890>.
+
+   [RFC7208]  Kitterman, S., "Sender Policy Framework (SPF) for
+              Authorizing Use of Domains in Email, Version 1", RFC 7208,
+              DOI 10.17487/RFC7208, April 2014,
+              <https://www.rfc-editor.org/info/rfc7208>.
+
+   [RFC7405]  Kyzivat, P., "Case-Sensitive String Support in ABNF",
+              RFC 7405, DOI 10.17487/RFC7405, December 2014,
+              <https://www.rfc-editor.org/info/rfc7405>.
+
+   [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
+              Writing an IANA Considerations Section in RFCs", BCP 26,
+              RFC 8126, DOI 10.17487/RFC8126, June 2017,
+              <https://www.rfc-editor.org/info/rfc8126>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+   [RFC8259]  Bray, T., Ed., "The JavaScript Object Notation (JSON) Data
+              Interchange Format", STD 90, RFC 8259,
+              DOI 10.17487/RFC8259, December 2017,
+              <https://www.rfc-editor.org/info/rfc8259>.
+
+   [RFC8552]  Crocker, D., "Scoped Interpretation of DNS Resource
+              Records through "Underscored" Naming of Attribute Leaves",
+              BCP 222, RFC 8552, DOI 10.17487/RFC8552, March 2019,
+              <https://www.rfc-editor.org/info/rfc8552>.
+
+   [RFC8615]  Nottingham, M., "Well-Known Uniform Resource Identifiers
+              (URIs)", RFC 8615, DOI 10.17487/RFC8615, May 2019,
+              <https://www.rfc-editor.org/info/rfc8615>.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 35]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [RFC9110]  Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke,
+              Ed., "HTTP Semantics", STD 97, RFC 9110,
+              DOI 10.17487/RFC9110, June 2022,
+              <https://www.rfc-editor.org/info/rfc9110>.
+
+   [RFC9499]  Hoffman, P. and K. Fujiwara, "DNS Terminology", BCP 219,
+              RFC 9499, DOI 10.17487/RFC9499, March 2024,
+              <https://www.rfc-editor.org/info/rfc9499>.
+
+   [RFC9525]  Saint-Andre, P. and R. Salz, "Service Identity in TLS",
+              RFC 9525, DOI 10.17487/RFC9525, November 2023,
+              <https://www.rfc-editor.org/info/rfc9525>.
+
+15.2.  Informative References
+
+   [CABF-BR]  CA/Browser Forum, "Baseline Requirements for the Issuance
+              and Management of Publicly-Trusted TLS Server
+              Certificates", <https://cabforum.org/working-
+              groups/server/baseline-requirements/requirements/>.
+
+   [I-D.ietf-dnsop-domain-verification-techniques]
+              Sahib, S., Huque, S., Wouters, P., and E. Nygren, "Domain
+              Control Validation using DNS", Work in Progress, Internet-
+              Draft, draft-ietf-dnsop-domain-verification-techniques-13,
+              22 June 2026, <https://datatracker.ietf.org/doc/html/
+              draft-ietf-dnsop-domain-verification-techniques-13>.
+
+   [I-D.ietf-regext-epp-same-entity]
+              Galvin, J., "Same Entity Set Support for the Extensible
+              Provisioning Protocol (EPP)", Work in Progress, Internet-
+              Draft, draft-ietf-regext-epp-same-entity-01, 13 July 2026,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-regext-
+              epp-same-entity-01>.
+
+   [ITCHIO]   Video Games Chronicle, "Funko and BrandShield say it
+              wasn't their fault itch.io was taken offline, site creator
+              says otherwise", December 2024,
+              <https://videogameschronicle.com/news/funko-and-
+              brandshield-say-it-wasnt-their-fault-itch-io-was-taken-
+              offline-site-creator-says-otherwise>.
+
+   [PSL]      Mozilla Foundation, "Public Suffix List",
+              <https://publicsuffix.org/>.
+
+   [RFC2606]  Eastlake 3rd, D. and A. Panitz, "Reserved Top Level DNS
+              Names", BCP 32, RFC 2606, DOI 10.17487/RFC2606, June 1999,
+              <https://www.rfc-editor.org/info/rfc2606>.
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 36]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [RFC3597]  Gustafsson, A., "Handling of Unknown DNS Resource Record
+              (RR) Types", RFC 3597, DOI 10.17487/RFC3597, September
+              2003, <https://www.rfc-editor.org/info/rfc3597>.
+
+   [RFC4343]  Eastlake 3rd, D., "Domain Name System (DNS) Case
+              Insensitivity Clarification", RFC 4343,
+              DOI 10.17487/RFC4343, January 2006,
+              <https://www.rfc-editor.org/info/rfc4343>.
+
+   [RFC4470]  Weiler, S. and J. Ihren, "Minimally Covering NSEC Records
+              and DNSSEC On-line Signing", RFC 4470,
+              DOI 10.17487/RFC4470, April 2006,
+              <https://www.rfc-editor.org/info/rfc4470>.
+
+   [RFC5155]  Laurie, B., Sisson, G., Arends, R., and D. Blacka, "DNS
+              Security (DNSSEC) Hashed Authenticated Denial of
+              Existence", RFC 5155, DOI 10.17487/RFC5155, March 2008,
+              <https://www.rfc-editor.org/info/rfc5155>.
+
+   [RFC5452]  Hubert, A. and R. van Mook, "Measures for Making DNS More
+              Resilient against Forged Answers", RFC 5452,
+              DOI 10.17487/RFC5452, January 2009,
+              <https://www.rfc-editor.org/info/rfc5452>.
+
+   [RFC5507]  IAB, Faltstrom, P., Ed., Austein, R., Ed., and P. Koch,
+              Ed., "Design Choices When Expanding the DNS", RFC 5507,
+              DOI 10.17487/RFC5507, April 2009,
+              <https://www.rfc-editor.org/info/rfc5507>.
+
+   [RFC5936]  Lewis, E. and A. Hoenes, Ed., "DNS Zone Transfer Protocol
+              (AXFR)", RFC 5936, DOI 10.17487/RFC5936, June 2010,
+              <https://www.rfc-editor.org/info/rfc5936>.
+
+   [RFC6686]  Kucherawy, M., "Resolution of the Sender Policy Framework
+              (SPF) and Sender ID Experiments", RFC 6686,
+              DOI 10.17487/RFC6686, July 2012,
+              <https://www.rfc-editor.org/info/rfc6686>.
+
+   [RFC7942]  Sheffer, Y. and A. Farrel, "Improving Awareness of Running
+              Code: The Implementation Status Section", BCP 205,
+              RFC 7942, DOI 10.17487/RFC7942, July 2016,
+              <https://www.rfc-editor.org/info/rfc7942>.
+
+   [RFC8198]  Fujiwara, K., Kato, A., and W. Kumari, "Aggressive Use of
+              DNSSEC-Validated Cache", RFC 8198, DOI 10.17487/RFC8198,
+              July 2017, <https://www.rfc-editor.org/info/rfc8198>.
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 37]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   [RFC8767]  Lawrence, D., Kumari, W., and P. Sood, "Serving Stale Data
+              to Improve DNS Resiliency", RFC 8767,
+              DOI 10.17487/RFC8767, March 2020,
+              <https://www.rfc-editor.org/info/rfc8767>.
+
+   [RFC9083]  Hollenbeck, S. and A. Newton, "JSON Responses for the
+              Registration Data Access Protocol (RDAP)", STD 95,
+              RFC 9083, DOI 10.17487/RFC9083, June 2021,
+              <https://www.rfc-editor.org/info/rfc9083>.
+
+   [RFC9103]  Toorop, W., Dickinson, S., Sahib, S., Aras, P., and A.
+              Mankin, "DNS Zone Transfer over TLS", RFC 9103,
+              DOI 10.17487/RFC9103, August 2021,
+              <https://www.rfc-editor.org/info/rfc9103>.
+
+   [RFC9156]  Bortzmeyer, S., Dolmans, R., and P. Hoffman, "DNS Query
+              Name Minimisation to Improve Privacy", RFC 9156,
+              DOI 10.17487/RFC9156, November 2021,
+              <https://www.rfc-editor.org/info/rfc9156>.
+
+   [RFC9224]  Blanchet, M., "Finding the Authoritative Registration Data
+              Access Protocol (RDAP) Service", STD 95, RFC 9224,
+              DOI 10.17487/RFC9224, March 2022,
+              <https://www.rfc-editor.org/info/rfc9224>.
+
+   [RFC9276]  Hardaker, W. and V. Dukhovni, "Guidance for NSEC3
+              Parameter Settings", BCP 236, RFC 9276,
+              DOI 10.17487/RFC9276, August 2022,
+              <https://www.rfc-editor.org/info/rfc9276>.
+
+   [RFC9824]  Huque, S., Elmerot, C., and O. Gudmundsson, "Compact
+              Denial of Existence in DNSSEC", RFC 9824,
+              DOI 10.17487/RFC9824, September 2025,
+              <https://www.rfc-editor.org/info/rfc9824>.
+
+   [RFC9989]  Herr, T., Ed. and J. Levine, Ed., "Domain-Based Message
+              Authentication, Reporting, and Conformance (DMARC)",
+              RFC 9989, DOI 10.17487/RFC9989, May 2026,
+              <https://www.rfc-editor.org/info/rfc9989>.
+
+   [UTS39]    Davis, M. and M. Suignard, "Unicode Security Mechanisms",
+              Unicode Technical Standard #39,
+              <https://www.unicode.org/reports/tr39/>.
+
+   [UTS46]    Davis, M. and M. Suignard, "Unicode IDNA Compatibility
+              Processing", Unicode Technical Standard #46,
+              <https://www.unicode.org/reports/tr46/>.
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 38]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+Appendix A.  Design Rationale
+
+A.1.  Why TXT Records
+
+   [RFC5507] discourages overloading TXT records, mainly because
+   unrelated uses collide at the same owner name.  DAC uses a dedicated
+   underscored name [RFC8552] and a version tag, which avoid that
+   collision.  A dedicated resource record type would remove the need
+   for version-tag parsing, and authoritative servers handle unknown
+   types [RFC3597].  TXT was chosen because DNS provisioning interfaces
+   used by domain operators support it universally, and because
+   experience with the dedicated SPF type [RFC6686], which [RFC7208]
+   removed, showed the deployment cost of requiring one.  The data model
+   is simple enough that a dedicated type could be added later without
+   changing it.
+
+A.2.  Why Not a List of Domains
+
+   If the parent published a list of its domains, a single query at the
+   parent would disclose the organization's entire portfolio at once,
+   including domains not otherwise easy to find, which is a ready-made
+   target list for attackers and can reveal products before launch.
+   Every new domain would require editing a shared record, and the list
+   would be bounded by record size or moved to a separate document
+   fetched over HTTPS, adding a dependency.  Hashing list entries does
+   not help, because domain names are guessable.  Per-child
+   confirmations reveal nothing at the parent and are each located only
+   from a claim.
+
+A.3.  Why Not Signatures
+
+   A parent could publish a public key and sign each child's name, with
+   the signature published by the child, so that the parent's zone would
+   not change per child.  Signatures remain valid after a child changes
+   hands, however, so they need expiry dates, periodic re-signing of
+   every child, revocation lists for urgent cases, and procedures for
+   key rotation and compromise.  DAC instead relies on the parent's
+   existing control of its DNS zone or web origin, at the cost of one
+   record per child at the parent.
+
+A.4.  Why the Procedure Does Not Use the Public Suffix List
+
+   Mechanisms that infer relationships between names depend on the
+   Public Suffix List [PSL], a community-maintained list without a
+   standard update model; [RFC9989] replaced its use in DMARC for this
+   reason.  DAC infers nothing: each confirmation requires a record that
+   only the parent's operator can publish.  A claim naming a public
+   suffix as its parent is confirmed only if that suffix's operator
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 39]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   confirms it.  Relying parties may still use boundary information to
+   decide which names to evaluate and how to attribute standing.
+
+A.5.  Why Affiliation Is Not Transitive Across Organizations
+
+   A mechanism in which organizations vouch for one another, with
+   vouching that propagates, lets an attacker gain standing by
+   compromising or paying any participant, dilutes the meaning of each
+   step, and makes revocation depend on parties who may not know about
+   the chain.  DAC expresses only that one operator operates or
+   authorizes a domain.  The protocol cannot tell whether two levels
+   belong to the same organization, which is why a confirmation says
+   nothing about the confirmed domain's own children (Section 5.4).
+
+A.6.  Why One Parent per Child
+
+   In designs where every member of a group lists, and must be confirmed
+   by, every other member, each new domain requires changes at every
+   member, and a verifier must compute the group as the closure of
+   pairwise links, at a cost that grows with the size of the group and
+   has to be capped by arbitrary limits.  DAC relates each child to
+   exactly one parent, so adding a domain changes two records and
+   verification has a fixed cost.  Organizations with several levels are
+   handled one affiliation at a time (Section 5.4).
+
+A.7.  Why Authentication Is Reported Rather Than Required
+
+   Requiring DNSSEC or an HTTPS origin on both sides of every
+   relationship would exclude most domains, including names held
+   defensively that serve no content, and would make the mechanism
+   unusable for most of the organizations it is meant to help.  DAC
+   instead reports whether each result is authenticated (Section 6.5),
+   so that relying parties can require authentication where their
+   decisions warrant it, and states precisely when an HTTPS confirmation
+   counts as authenticated.
+
+A.8.  Why No Aggregators
+
+   DAC needs no index, registry of relationships, or submission service.
+   Every verifier obtains results directly from the domains concerned,
+   so there is no additional party to operate, trust, or keep current,
+   and no endpoint that can be used to make a service send traffic to
+   arbitrary domains.  Aggregators can be built on DAC, but nothing
+   depends on them.
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 40]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+A.9.  Why the Meaning of a Confirmation Is Defined
+
+   A mechanism that declares a relationship between domains, but whose
+   specification forbids relying parties to draw conclusions from it,
+   gives those parties nothing to act on, and the problems in
+   Section 1.1 remain.  DAC addresses a specific operational problem
+   with intended consumers, takedown services and reputation systems,
+   and states what a confirmation means (Section 8), including where
+   reports of abuse are to be sent.  It also bounds that meaning: a
+   confirmation conveys no more standing than the parent already has
+   (Section 8.2).  The author invites operators of such services to
+   comment on whether the stated meaning meets their needs.
+
+Appendix B.  Complete Example
+
+   The operator of bank.example launches embank.example and uses the DNS
+   channel.
+
+   ; In the bank.example zone (once):
+   _affiliation.bank.example.   3600 IN TXT
+       "v=DAC1; r=mailto:abuse@bank.example"
+
+   ; In the bank.example zone (per child):
+   mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example.
+                                3600 IN TXT "v=DAC1; d=embank.example"
+
+   ; In the embank.example zone:
+   _affiliation.embank.example. 3600 IN TXT
+       "v=DAC1; p=bank.example; t=mfrggzdfmztwq2lknnwg23tpobyxe43u"
+
+   A verifier evaluating embank.example:
+
+   1.  queries TXT at _affiliation.embank.example and obtains parent
+       "bank.example" and the token;
+
+   2.  queries TXT at _affiliation.bank.example and obtains the marker:
+       channel "dns", mode "enforce", contact
+       "mailto:abuse@bank.example";
+
+   3.  queries TXT at
+       mfrggzdfmztwq2lknnwg23tpobyxe43u._affiliation.bank.example and
+       obtains "d=embank.example", which equals the child domain.
+
+   The result is "confirmed", reusable for 3600 seconds, and
+   authenticated if all three answers validate as secure.
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 41]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   A mail filter assessing "statements.embank.example" verifies
+   "embank.example", the domain it already treats as responsible for
+   that name.  Because the confirmation above has no "s" tag, the result
+   states nothing about "statements.embank.example" itself.  If
+   bank.example operates every name under embank.example, it publishes
+   the confirmation as "v=DAC1; d=embank.example; s=subtree", and the
+   result covers "statements.embank.example" too.
+
+   An attacker registers embank-login.example and publishes a copy of
+   the claim.  Step 3 returns "d=embank.example", which differs from
+   "embank-login.example", so the result is "not-confirmed".  When the
+   operator of bank.example sells embank.example, it deletes the
+   confirmation; from then on, embank.example yields "not-confirmed"
+   whatever its new operator publishes.
+
+Appendix C.  Test Vectors
+
+   Each vector describes a change to the data of Appendix B and the
+   expected result for the child domain "embank.example" (in vector 6,
+   "embank-login.example").  T is the example token.  The reference
+   implementation (Section 14) runs these vectors as tests.
+
+   +==+==============================================+================+
+   |# | Change from the example                      | Result         |
+   +==+==============================================+================+
+   |1 | None                                         | confirmed      |
+   +--+----------------------------------------------+----------------+
+   |2 | No claim at the child                        | none           |
+   +--+----------------------------------------------+----------------+
+   |3 | Child has only "v=spf1 -all"                 | none           |
+   +--+----------------------------------------------+----------------+
+   |4 | Child has "v=DAC10; p=bank.example; t=T"     | none           |
+   +--+----------------------------------------------+----------------+
+   |5 | No marker at the parent                      | not-confirmed  |
+   +--+----------------------------------------------+----------------+
+   |6 | Child is embank-login.example with a copy of | not-confirmed  |
+   |  | the claim                                    |                |
+   +--+----------------------------------------------+----------------+
+   |7 | Claim carries a token the parent never       | not-confirmed  |
+   |  | issued                                       |                |
+   +--+----------------------------------------------+----------------+
+   |8 | Confirmation deleted                         | not-confirmed  |
+   +--+----------------------------------------------+----------------+
+   |9 | Marker name is an empty non-terminal         | not-confirmed  |
+   |  | (NOERROR, no data)                           |                |
+   +--+----------------------------------------------+----------------+
+   |10| Marker answer contains a CNAME               | permerror      |
+   +--+----------------------------------------------+----------------+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 42]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   |11| Marker answer contains a CNAME and no TXT    | permerror      |
+   |  | data                                         |                |
+   +--+----------------------------------------------+----------------+
+   |12| Claim answer contains a CNAME                | confirmed      |
+   +--+----------------------------------------------+----------------+
+   |13| Confirmation answer contains a CNAME         | confirmed      |
+   +--+----------------------------------------------+----------------+
+   |14| Two DAC records at the claim name            | permerror      |
+   +--+----------------------------------------------+----------------+
+   |15| Two DAC records at the confirmation name     | permerror      |
+   +--+----------------------------------------------+----------------+
+   |16| Confirmation repeats the "d" tag             | permerror      |
+   +--+----------------------------------------------+----------------+
+   |17| Confirmation has no "d" tag                  | permerror      |
+   +--+----------------------------------------------+----------------+
+   |18| Token in uppercase                           | permerror      |
+   +--+----------------------------------------------+----------------+
+   |19| Token of 8 characters                        | permerror      |
+   +--+----------------------------------------------+----------------+
+   |20| Token of 26 characters, confirmed under that | confirmed      |
+   |  | token                                        |                |
+   +--+----------------------------------------------+----------------+
+   |21| Claim has "p=Bank.Example."                  | permerror      |
+   +--+----------------------------------------------+----------------+
+   |22| Claim has an additional tag "z=future"       | confirmed      |
+   +--+----------------------------------------------+----------------+
+   |23| Claim repeats the "p" tag                    | permerror      |
+   +--+----------------------------------------------+----------------+
+   |24| Claim names embank.example as its parent     | permerror      |
+   +--+----------------------------------------------+----------------+
+   |25| Parent is the single-label name "bank"       | confirmed      |
+   +--+----------------------------------------------+----------------+
+   |26| Claim has "p=192.0.2.1"                      | permerror      |
+   +--+----------------------------------------------+----------------+
+   |27| Marker has "m=test"                          | confirmed,     |
+   |  |                                              | mode test      |
+   +--+----------------------------------------------+----------------+
+   |28| Marker has "m=other"                         | confirmed,     |
+   |  |                                              | mode test      |
+   +--+----------------------------------------------+----------------+
+   |29| Confirmation has "s=subtree"                 | confirmed,     |
+   |  |                                              | covers names   |
+   |  |                                              | below          |
+   +--+----------------------------------------------+----------------+
+   |30| Confirmation has "s=other"                   | confirmed,     |
+   |  |                                              | child only     |
+   +--+----------------------------------------------+----------------+
+   |31| Confirmation has "x=2099-12-31"              | confirmed      |
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 43]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   +--+----------------------------------------------+----------------+
+   |32| Confirmation has "x=2020-01-01"              | not-confirmed  |
+   |  |                                              | (report reason |
+   |  |                                              | "expired")     |
+   +--+----------------------------------------------+----------------+
+   |33| Confirmation has "x=2027-02-30"              | permerror      |
+   +--+----------------------------------------------+----------------+
+   |34| Confirmation has an "x" value equal to the   | confirmed      |
+   |  | current UTC date                             |                |
+   +--+----------------------------------------------+----------------+
+   |35| Confirmation has "s=subtree; x=2099-12-31"   | confirmed,     |
+   |  |                                              | covers names   |
+   |  |                                              | below          |
+   +--+----------------------------------------------+----------------+
+   |36| Marker has "f=mailto:dac-                    | not-confirmed; |
+   |  | reports@bank.example"; claim carries a token | report with    |
+   |  | the parent never issued                      | reason         |
+   |  |                                              | "unconfirmed-  |
+   |  |                                              | token" to that |
+   |  |                                              | address        |
+   +--+----------------------------------------------+----------------+
+   |37| Marker has "f=mailto:reports@other.example"; | not-confirmed; |
+   |  | claim carries a token the parent never       | no report      |
+   |  | issued                                       |                |
+   +--+----------------------------------------------+----------------+
+   |38| Marker has                                   | no reports     |
+   |  | "f=mailto:r@bank.example?cc=x@other.example" | (tag ignored)  |
+   +--+----------------------------------------------+----------------+
+   |39| Marker has "f=https://user@bank.example/r"   | no reports     |
+   |  | or "f=https://bank.example:8443/r"           | (tag ignored)  |
+   +--+----------------------------------------------+----------------+
+   |40| Marker has "f=https://reports.bank.example/  | not-confirmed; |
+   |  | dac"; "c=https" and the resource returns 404 | report reason  |
+   |  |                                              | "unconfirmed-  |
+   |  |                                              | token"         |
+   +--+----------------------------------------------+----------------+
+   |41| Confirmation repeats the "d" tag, marker has | permerror;     |
+   |  | a valid "f"                                  | report reason  |
+   |  |                                              | "malformed-    |
+   |  |                                              | confirmation"  |
+   +--+----------------------------------------------+----------------+
+   |42| Child record has only marker tags ("v=DAC1;  | none           |
+   |  | r=mailto:abuse@embank.example")              |                |
+   +--+----------------------------------------------+----------------+
+   |43| Child record has claim and marker tags; its  | confirmed      |
+   |  | own children verify against it               | (both)         |
+   +--+----------------------------------------------+----------------+
+   |44| Claim has "p=bank.example" but no "t"        | permerror      |
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 44]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+   +--+----------------------------------------------+----------------+
+   |45| Marker has "r=ftp://x.example"               | confirmed, no  |
+   |  |                                              | contact        |
+   +--+----------------------------------------------+----------------+
+   |46| Marker has "c=future" or "c=HTTPS"           | not-confirmed  |
+   +--+----------------------------------------------+----------------+
+   |47| SERVFAIL, timeout, or DNSSEC bogus at any of | temperror      |
+   |  | the three names                              |                |
+   +--+----------------------------------------------+----------------+
+   |48| Confirmation name returns NOERROR without    | not-confirmed  |
+   |  | data                                         |                |
+   +--+----------------------------------------------+----------------+
+   |49| "c=https"; 200, "text/plain", "v=DAC1;       | confirmed      |
+   |  | d=embank.example"                            |                |
+   +--+----------------------------------------------+----------------+
+   |50| "c=https"; 200, "text/plain; charset=utf-8", | confirmed      |
+   |  | "v=DAC1; d=embank.example"                   |                |
+   +--+----------------------------------------------+----------------+
+   |51| "c=https"; 200, "text/plain", "Cache-        | confirmed, not |
+   |  | Control: no-store", "v=DAC1;                 | reusable       |
+   |  | d=embank.example"                            |                |
+   +--+----------------------------------------------+----------------+
+   |52| "c=https"; 404                               | not-confirmed  |
+   +--+----------------------------------------------+----------------+
+   |53| "c=https"; 301                               | permerror      |
+   +--+----------------------------------------------+----------------+
+   |54| "c=https"; 200 with "text/html"              | permerror      |
+   +--+----------------------------------------------+----------------+
+   |55| "c=https"; content longer than 1024 octets   | permerror      |
+   +--+----------------------------------------------+----------------+
+   |56| "c=https"; content is two records            | permerror      |
+   +--+----------------------------------------------+----------------+
+   |57| "c=https"; malformed record                  | permerror      |
+   +--+----------------------------------------------+----------------+
+   |58| "c=https"; 503 or connection failure         | temperror      |
+   +--+----------------------------------------------+----------------+
+   |59| "c=https"; parent has no globally reachable  | permerror      |
+   |  | address                                      |                |
+   +--+----------------------------------------------+----------------+
+   |60| "c=https"; no resource, but a DNS            | not-confirmed  |
+   |  | confirmation exists                          |                |
+   +--+----------------------------------------------+----------------+
+
+                          Table 5: Test Vectors
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 45]
+
+Internet-Draft       Domain Affiliation Confirmation        October 2026
+
+
+Acknowledgments
+
+   This document builds on the practices collected in
+   [I-D.ietf-dnsop-domain-verification-techniques] and on operational
+   experience with SPF, DMARC, MTA-STS, and ACME.
+
+Author's Address
+
+   Dimitri Manelidis
+   Email: tastypepperoni@gmail.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Manelidis                 Expires 24 April 2027                [Page 46]

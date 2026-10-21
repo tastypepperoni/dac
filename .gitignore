@@ -1,0 +1,14 @@
+# binaries
+/dac
+/dac.exe
+*.test
+# local state from trying the tool
+*.lock
+reports.json
+*.tmp
+/testing/*.json
+/testing/my.zone
+/testing/parent.zone
+/testing/children.zone
+# draft build byproducts
+/draft/*.v2v3.xml
